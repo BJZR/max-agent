@@ -61,6 +61,9 @@ MAX usa `tool_calls` nativos cuando el servidor/modelo los soporta, y además un
 ### Directorio de trabajo persistente
 Cada sesión mantiene su propio directorio de trabajo. Un comando `cd DIR` suelto (sin `&&`) cambia la carpeta actual para las herramientas siguientes (`run_command`, `read_file`, `write_file`, `list_dir`, `search_files` resuelven rutas relativas contra esa carpeta). `cd ~` o `cd` vuelve al home. En modo web cada sesión tiene su workspace; en TUI es uno solo por proceso.
 
+### Persistencia de sesiones
+MAX guarda el historial y el cwd de cada sesión en `~/.max/sessions.json` (desactivable con `persist: false` en la config o `-no-persist`). Al reiniciar, web restaura todas las sesiones y TUI la última conversación con su directorio de trabajo.
+
 ## Comandos TUI
 ```
 /help    lista los comandos

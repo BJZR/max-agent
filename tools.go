@@ -29,6 +29,7 @@ var toolSpecs []toolSpec
 var dangerous = map[string]bool{
 	"run_command": true,
 	"write_file":  true,
+	"edit_file":   true,
 }
 
 func funcSpec(name, desc string, required []string, props map[string]any) toolSpec {
@@ -87,6 +88,21 @@ func init() {
 				"path":    strParam("directorio raíz (por defecto .)"),
 				"include": strParam("filtro de archivo, ej: *.go (opcional)"),
 			}),
+		funcSpec("edit_file",
+			"Reemplaza un texto exacto dentro de un archivo por otro. Útil para corregir bugs sin reescribir el archivo completo.",
+			[]string{"path", "old", "new"},
+			map[string]any{
+				"path": strParam("ruta del archivo"),
+				"old":  strParam("texto exacto a buscar (debe aparecer al menos una vez)"),
+				"new":  strParam("texto de reemplazo"),
+			}),
+		funcSpec("tree",
+			"Lista el árbol de directorios hasta cierta profundidad.",
+			[]string{},
+			map[string]any{
+				"path":  strParam("directorio raíz (por defecto .)"),
+				"depth": strParam("profundidad máxima, ej: 2 (por defecto 2)"),
+			}),
 	}
 }
 
@@ -99,6 +115,9 @@ type toolArgs struct {
 	Content string `json:"content"`
 	Pattern string `json:"pattern"`
 	Include string `json:"include"`
+	Old     string `json:"old"`
+	New     string `json:"new"`
+	Depth   string `json:"depth"`
 }
 
 func execTool(ctx context.Context, ws *Workspace, name string, raw json.RawMessage) (string, error) {
@@ -117,6 +136,10 @@ func execTool(ctx context.Context, ws *Workspace, name string, raw json.RawMessa
 		return listDir(ctx, ws, a)
 	case "search_files":
 		return searchFiles(ctx, ws, a)
+	case "edit_file":
+		return editFile(ctx, ws, a)
+	case "tree":
+		return tree(ctx, ws, a)
 	}
 	return "", fmt.Errorf("herramienta desconocida: %s", name)
 }
@@ -293,4 +316,92 @@ func searchFiles(ctx context.Context, ws *Workspace, a toolArgs) (string, error)
 		return strings.Join(lines, "\n"), err
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+func editFile(ctx context.Context, ws *Workspace, a toolArgs) (string, error) {
+	if a.Path == "" || a.Old == "" {
+		return "", fmt.Errorf("faltan path y old")
+	}
+	p := ws.Resolve(a.Path)
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return "", err
+	}
+	if bytes.IndexByte(data, 0) >= 0 {
+		return "", fmt.Errorf("%s es un archivo binario", a.Path)
+	}
+	s := string(data)
+	if !strings.Contains(s, a.Old) {
+		return "", fmt.Errorf("no se encontró el texto a reemplazar en %s", a.Path)
+	}
+	n := strings.Count(s, a.Old)
+	if err := os.WriteFile(p, []byte(strings.Replace(s, a.Old, a.New, -1)), 0o644); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("editado %s: %d reemplazo(s)", a.Path, n), nil
+}
+
+func tree(ctx context.Context, ws *Workspace, a toolArgs) (string, error) {
+	root := a.Path
+	if root == "" {
+		root = "."
+	}
+	root = ws.Resolve(root)
+	depth := 2
+	if a.Depth != "" {
+		fmt.Sscanf(a.Depth, "%d", &depth)
+		if depth < 1 {
+			depth = 1
+		}
+	}
+	var sb strings.Builder
+	limit := 600
+	skipDirs := map[string]bool{".git": true, "node_modules": true}
+	var walk func(dir string, prefix string, d int) bool
+	walk = func(dir, prefix string, d int) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return true
+		}
+		for i, e := range entries {
+			if limit <= 0 {
+				sb.WriteString(prefix + "└── … (límite alcanzado)\n")
+				return false
+			}
+			last := i == len(entries)-1
+			conn := "├── "
+			nextPrefix := prefix + "│   "
+			if last {
+				conn = "└── "
+				nextPrefix = prefix + "    "
+			}
+			name := e.Name()
+			if e.IsDir() {
+				if skipDirs[name] {
+					continue
+				}
+				sb.WriteString(prefix + conn + name + "/\n")
+				limit--
+				if d < depth {
+					if !walk(filepath.Join(dir, name), nextPrefix, d+1) {
+						return false
+					}
+				}
+			} else {
+				sb.WriteString(prefix + conn + name + "\n")
+				limit--
+			}
+		}
+		return true
+	}
+	base := filepath.Base(root)
+	if base == "." || base == "/" || base == "" {
+		base = root
+	}
+	sb.WriteString(base + "/\n")
+	walk(root, "", 1)
+	return sb.String(), nil
 }

@@ -17,6 +17,7 @@ type Config struct {
 	Tools        bool    `yaml:"tools"`
 	Context      bool    `yaml:"context"`
 	AutoApprove  bool    `yaml:"auto_approve"`
+	Persist      bool    `yaml:"persist"`
 	ServerAddr   string  `yaml:"server_addr"`
 }
 
@@ -30,6 +31,7 @@ func defaultConfig() Config {
 		Tools:        true,
 		Context:      true,
 		AutoApprove:  false,
+		Persist:      true,
 		ServerAddr:   ":8090",
 	}
 }

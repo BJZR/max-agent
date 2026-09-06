@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 type webApp struct {
@@ -91,6 +92,24 @@ func runWeb(cfg Config, prov *Provider, system string) {
 		pending:    map[string]chan bool{},
 		sessions:   map[string][]Msg{},
 		workspaces: map[string]*Workspace{},
+	}
+
+	if cfg.Persist {
+		st := loadStore()
+		for sid, d := range st {
+			if len(d.Messages) == 0 {
+				continue
+			}
+			ws := newWorkspace()
+			if d.Cwd != "" {
+				ws.SetCwd(d.Cwd)
+			}
+			app.workspaces[sid] = ws
+			app.sessions[sid] = d.Messages
+		}
+		if len(st) > 0 {
+			log.Printf("restauradas %d sesiones desde disco", len(st))
+		}
 	}
 
 	mux := http.NewServeMux()
@@ -227,6 +246,14 @@ func (app *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	app.sessions[sid] = newHist
+	if app.cfg.Persist {
+		d := sessionData{Updated: time.Now(), Cwd: ws.Cwd(), Messages: newHist}
+		st := loadStore()
+		st[sid] = d
+		if err := st.Save(); err != nil {
+			log.Printf("persistir sesión: %v", err)
+		}
+	}
 	app.mu.Unlock()
 }
 

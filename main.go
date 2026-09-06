@@ -14,15 +14,16 @@ var staticFS embed.FS
 
 func main() {
 	var (
-		mode   = flag.String("mode", "tui", "interfaz: tui | web")
-		config = flag.String("config", "max.yaml", "archivo de configuración")
-		model  = flag.String("model", "", "modelo (sobreescribe config)")
-		base   = flag.String("base-url", "", "URL base de la API (/v1)")
-		apiKey = flag.String("api-key", "", "clave de API")
-		server = flag.String("server", "", "dirección del servidor web")
-		yes    = flag.Bool("yes", false, "auto-aprobar herramientas peligrosas")
-		noTool = flag.Bool("no-tools", false, "desactivar herramientas")
-		help   = flag.Bool("help", false, "mostrar ayuda")
+		mode      = flag.String("mode", "tui", "interfaz: tui | web")
+		config    = flag.String("config", "max.yaml", "archivo de configuración")
+		model     = flag.String("model", "", "modelo (sobreescribe config)")
+		base      = flag.String("base-url", "", "URL base de la API (/v1)")
+		apiKey    = flag.String("api-key", "", "clave de API")
+		server    = flag.String("server", "", "dirección del servidor web")
+		yes       = flag.Bool("yes", false, "auto-aprobar herramientas peligrosas")
+		noTool    = flag.Bool("no-tools", false, "desactivar herramientas")
+		noPersist = flag.Bool("no-persist", false, "no guardar sesiones en disco")
+		help      = flag.Bool("help", false, "mostrar ayuda")
 	)
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, `MAX — agente minimalista en Go
@@ -37,6 +38,7 @@ uso: max [flags]
   -server DIR        dirección del modo web, ej :8090
   -yes[bool]         aprobar herramientas sin preguntar
   -no-tools[bool]    desactivar herramientas
+  -no-persist[bool]  no guardar sesiones en disco (~/.max/sessions.json)
   -help              esta ayuda
 
 ejemplos:
@@ -73,6 +75,9 @@ ejemplos:
 	}
 	if *noTool {
 		cfg.Tools = false
+	}
+	if *noPersist {
+		cfg.Persist = false
 	}
 
 	system := defaultSystemPrompt

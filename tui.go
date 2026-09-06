@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 )
 
 type termApprover struct {
@@ -42,11 +43,13 @@ func runTUI(cfg Config, prov *Provider, system string) error {
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	out := os.Stdout
 
+	ws := newWorkspace()
+
 	agent := &Agent{
 		prov:        prov,
 		config:      cfg,
 		system:      system,
-		ws:          newWorkspace(),
+		ws:          ws,
 		approver:    &termApprover{in: sc, out: out, auto: cfg.AutoApprove || !isTTY(os.Stdin)},
 		onToken:     func(t string) { fmt.Fprint(out, t) },
 		onReasoning: func(r string) { fmt.Fprintf(out, "\033[2m%s\033[0m", r) },
@@ -68,7 +71,32 @@ func runTUI(cfg Config, prov *Provider, system string) error {
 		}
 		return nil
 	}
+	saveSession := func() {
+		if cfg.Persist {
+			st := loadStore()
+			st["tui"] = sessionData{Updated: time.Now(), Cwd: ws.Cwd(), Messages: filterNudge(history)}
+			if err := st.Save(); err != nil {
+				fmt.Fprintf(out, "\033[31m(persistir: %v)\033[0m\n", err)
+			}
+		}
+	}
 	history = seed()
+	if cfg.Persist {
+		if d, ok := loadStore()["tui"]; ok && len(d.Messages) > 0 {
+			var fresh []Msg
+			for _, m := range d.Messages {
+				if strings.Contains(m.Content, "[Contexto del entorno (dado por MAX)]") {
+					continue
+				}
+				fresh = append(fresh, m)
+			}
+			history = append(seed(), fresh...)
+			if d.Cwd != "" {
+				ws.SetCwd(d.Cwd)
+				fmt.Fprintf(out, "\033[2m(restaurada sesión · cwd %s)\033[0m\n", ws.Cwd())
+			}
+		}
+	}
 	for {
 		fmt.Fprintf(out, "\033[36m»\033[0m ")
 		if !sc.Scan() {
@@ -80,9 +108,12 @@ func runTUI(cfg Config, prov *Provider, system string) error {
 		}
 		switch {
 		case line == "/exit" || line == "/quit":
+			saveSession()
 			return nil
 		case line == "/clear":
+			ws.SetCwd(newWorkspace().Cwd())
 			history = seed()
+			saveSession()
 			fmt.Fprintln(out)
 			continue
 		case line == "/help":
@@ -98,6 +129,7 @@ func runTUI(cfg Config, prov *Provider, system string) error {
 		fmt.Fprintf(out, "\033[36m»\033[0m %s\n", truncate(line, 500))
 		content, newHist, err := agent.Chat(context.Background(), history, line)
 		history = newHist
+		saveSession()
 		fmt.Fprintln(out)
 		if err != nil {
 			fmt.Fprintf(out, "\033[31merror: %s\033[0m\n", err)

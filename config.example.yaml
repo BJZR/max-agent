@@ -10,5 +10,7 @@ temperature: 0.2
 
 tools: true                        # herramientas (ejecutar, leer/escribir, buscar)
 auto_approve: false                # true = ejecuta sin preguntar
+context: true                      # inyecta el contexto del entorno al arrancar
+persist: true                      # guarda sesiones en ~/.max/sessions.json
 
 server_addr: ":8090"               # solo para el modo web

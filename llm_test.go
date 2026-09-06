@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func sseChunks(parts ...map[string]any) string {
@@ -178,6 +179,81 @@ func TestSearchFiles(t *testing.T) {
 	}
 	if !strings.Contains(out, "a.go:2") || strings.Contains(out, "b.txt") {
 		t.Fatalf("out = %q", out)
+	}
+}
+
+func TestEditFile(t *testing.T) {
+	ws := newWorkspace()
+	dir := t.TempDir()
+	path := dir + "/bug.go"
+	if err := writePath(path, []byte("func a() { return 1 }\nfunc f() { return a() }\n")); err != nil {
+		t.Fatal(err)
+	}
+	out, err := execTool(context.Background(), ws, "edit_file", json.RawMessage(
+		fmt.Sprintf(`{"path":%q,"old":"return a()","new":"return a() + 1"}`, path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "1 reemplazo") {
+		t.Fatalf("out = %q", out)
+	}
+	data, _ := os.ReadFile(path)
+	if !strings.Contains(string(data), "return a() + 1") {
+		t.Fatalf("no se aplicó el reemplazo: %q", data)
+	}
+	out, err = execTool(context.Background(), ws, "edit_file", json.RawMessage(
+		fmt.Sprintf(`{"path":%q,"old":"no existe","new":"x"}`, path)))
+	if err == nil {
+		t.Fatalf("debería fallar si no encuentra old, out=%q", out)
+	}
+}
+
+func TestTree(t *testing.T) {
+	ws := newWorkspace()
+	dir := t.TempDir()
+	writePath(dir+"/a/x1.go", []byte(""))
+	writePath(dir+"/a/s1/x2.go", []byte(""))
+	writePath(dir+"/b.txt", []byte(""))
+	out, err := execTool(context.Background(), ws, "tree", json.RawMessage(fmt.Sprintf(`{"path":%q,"depth":"2"}`, dir)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"a/", "b.txt", "x1.go"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("tree = %q, falta %q", out, want)
+		}
+	}
+	if strings.Contains(out, "x2.go") {
+		t.Fatalf("depth 2 no debería listar el contenido de s1/: %q", out)
+	}
+}
+
+func TestStoreRoundtrip(t *testing.T) {
+	p := t.TempDir() + "/.max/sessions.json"
+	st := store{"abc": sessionData{
+		Updated:  time.Now(),
+		Cwd:      "/tmp/foo",
+		Messages: []Msg{{Role: "user", Content: "hola"}, {Role: "assistant", Content: "chau"}},
+	}}
+	if err := st.savePath(p); err != nil {
+		t.Fatal(err)
+	}
+	got := loadStorePath(p)
+	d, ok := got["abc"]
+	if !ok {
+		t.Fatal("sesión no recuperada")
+	}
+	if d.Cwd != "/tmp/foo" || len(d.Messages) != 2 || d.Messages[1].Role != "assistant" {
+		t.Fatalf("datos corruptos: %+v", d)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("archivo no creado: %v", err)
+	}
+}
+
+func TestStoreMissingFile(t *testing.T) {
+	if s := loadStorePath(t.TempDir() + "/no-existe.json"); len(s) != 0 {
+		t.Fatalf("esperaba store vacío, %v", s)
 	}
 }
 
