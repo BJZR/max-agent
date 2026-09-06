@@ -49,6 +49,9 @@ Las herramientas peligrosas piden confirmación (`y/N`). Con `-yes` o `auto_appr
 ### API de herramientas nativas + fallback de code-fences
 MAX usa `tool_calls` nativos cuando el servidor/modelo los soporta, y además un **fallback que funciona con cualquier modelo**: si la respuesta no trae `tool_calls` pero tiene comandos dentro de bloques ```bash``` (según el system prompt), MAX los extrae, los manda por el mismo flujo de aprobación/ejecución y le devuelve la salida al modelo para continuar. Esto hace que un llama-server local con un modelo 3B sin tool-support real también pueda trabajar.
 
+### Directorio de trabajo persistente
+Cada sesión mantiene su propio directorio de trabajo. Un comando `cd DIR` suelto (sin `&&`) cambia la carpeta actual para las herramientas siguientes (`run_command`, `read_file`, `write_file`, `list_dir`, `search_files` resuelven rutas relativas contra esa carpeta). `cd ~` o `cd` vuelve al home. En modo web cada sesión tiene su workspace; en TUI es uno solo por proceso.
+
 ## Comandos TUI
 `/help` `/tools` `/clear` `/exit`
 

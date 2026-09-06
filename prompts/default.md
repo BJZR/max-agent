@@ -8,6 +8,7 @@ REGLAS:
   comando aquí
   ```
 - Explora antes de actuar: ls, find, cat, grep -n, rg. Nunca inventes rutas; verifica lo que no sepas.
+- El directorio de trabajo de la sesión persiste. Un comando `cd DIR` (suelto, sin &&) cambia la carpeta actual para los comandos siguientes; usa `cd` para entrar a carpetas relativas como lo haría un humano en su terminal. `cd ~` o `cd` vuelve al home.
 - MAX aprueba tus comandos, los ejecuta y te devuelve la salida. Espera el resultado y continúa hasta que la tarea quede COMPLETA y VERIFICADA (ej: compila y ejecuta tu programa, corre los tests, muestra la salida).
 - Si un comando falla, lee el error con calma, corrige y reintenta.
 - Preguntas teóricas o conceptuales: respóndelas bien, sin ejecutar nada.

@@ -14,12 +14,13 @@ import (
 )
 
 type webApp struct {
-	cfg      Config
-	prov     *Provider
-	system   string
-	mu       sync.Mutex
-	pending  map[string]chan bool
-	sessions map[string][]Msg
+	cfg        Config
+	prov       *Provider
+	system     string
+	mu         sync.Mutex
+	pending    map[string]chan bool
+	sessions   map[string][]Msg
+	workspaces map[string]*Workspace
 }
 
 type webPayload struct {
@@ -84,11 +85,12 @@ func newID() (string, error) {
 
 func runWeb(cfg Config, prov *Provider, system string) {
 	app := &webApp{
-		cfg:      cfg,
-		prov:     prov,
-		system:   system,
-		pending:  map[string]chan bool{},
-		sessions: map[string][]Msg{},
+		cfg:        cfg,
+		prov:       prov,
+		system:     system,
+		pending:    map[string]chan bool{},
+		sessions:   map[string][]Msg{},
+		workspaces: map[string]*Workspace{},
 	}
 
 	mux := http.NewServeMux()
@@ -188,10 +190,20 @@ func (app *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var ws *Workspace
+	app.mu.Lock()
+	ws = app.workspaces[sid]
+	if ws == nil {
+		ws = newWorkspace()
+		app.workspaces[sid] = ws
+	}
+	app.mu.Unlock()
+
 	agent := &Agent{
 		prov:     app.prov,
 		config:   app.cfg,
 		system:   app.system,
+		ws:       ws,
 		approver: &webApprover{app: app, ctx: ctx, auto: app.cfg.AutoApprove, write: write},
 		onToken:  func(t string) { write(sseMsg{Type: "token", Text: t}) },
 		onToolOut: func(s string) {

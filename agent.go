@@ -29,6 +29,7 @@ type Agent struct {
 	config      Config
 	system      string
 	approver    Approver
+	ws          *Workspace
 	onToken     func(string)
 	onReasoning func(string)
 	onTool      func(name, args string)
@@ -63,6 +64,7 @@ func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, 
 	msgs = append(msgs, Msg{Role: "user", Content: input})
 
 	nudged := false
+	anythingExecuted := false
 	for step := 0; step < maxSteps; step++ {
 		lastUser := input
 		for i := len(msgs) - 1; i >= 0; i-- {
@@ -77,6 +79,7 @@ func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, 
 		}
 		msgs = append(msgs, resp)
 		if len(resp.ToolCalls) > 0 {
+			anythingExecuted = true
 			for _, tc := range resp.ToolCalls {
 				name := tc.Function.Name
 				args := tc.Function.Arguments
@@ -96,7 +99,7 @@ func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, 
 						Content: "El usuario rechazó ejecutar la herramienta. Continúa sin ejecutarla."})
 					continue
 				}
-				out, err := execTool(ctx, name, json.RawMessage(args))
+				out, err := execTool(ctx, a.ws, name, json.RawMessage(args))
 				if a.onToolOut != nil {
 					a.onToolOut(out)
 				}
@@ -126,7 +129,7 @@ func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, 
 							continue
 						}
 					}
-					out, err := execTool(ctx, "run_command", args)
+					out, err := execTool(ctx, a.ws, "run_command", args)
 					if a.onToolOut != nil {
 						a.onToolOut(out)
 					}
@@ -135,6 +138,7 @@ func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, 
 					}
 					results.WriteString("$ " + c + "\n" + out + "\n")
 					executed = true
+					anythingExecuted = true
 				}
 				if executed {
 					msgs = append(msgs, Msg{Role: "user",
@@ -143,7 +147,7 @@ func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, 
 				}
 			}
 		}
-		if a.config.Tools && !nudged && looksLikeTask(lastUser) && strings.TrimSpace(resp.Content) != "" {
+		if a.config.Tools && !nudged && !anythingExecuted && looksLikeTask(lastUser) && strings.TrimSpace(resp.Content) != "" {
 			nudged = true
 			msgs = append(msgs, Msg{Role: "user", Content: nudgeMsg})
 			continue

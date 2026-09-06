@@ -101,22 +101,22 @@ type toolArgs struct {
 	Include string `json:"include"`
 }
 
-func execTool(ctx context.Context, name string, raw json.RawMessage) (string, error) {
+func execTool(ctx context.Context, ws *Workspace, name string, raw json.RawMessage) (string, error) {
 	var a toolArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return "", fmt.Errorf("argumentos inválidos: %v", err)
 	}
 	switch name {
 	case "run_command":
-		return runCommand(ctx, a)
+		return runCommand(ctx, ws, a)
 	case "read_file":
-		return readFile(ctx, a)
+		return readFile(ctx, ws, a)
 	case "write_file":
-		return writeFile(ctx, a)
+		return writeFile(ctx, ws, a)
 	case "list_dir":
-		return listDir(ctx, a)
+		return listDir(ctx, ws, a)
 	case "search_files":
-		return searchFiles(ctx, a)
+		return searchFiles(ctx, ws, a)
 	}
 	return "", fmt.Errorf("herramienta desconocida: %s", name)
 }
@@ -128,9 +128,16 @@ func truncate(s string, n int) string {
 	return s[:n] + fmt.Sprintf("\n… (%d chars omitidos)", len(s)-n)
 }
 
-func runCommand(ctx context.Context, a toolArgs) (string, error) {
+func runCommand(ctx context.Context, ws *Workspace, a toolArgs) (string, error) {
 	if strings.TrimSpace(a.Command) == "" {
 		return "", fmt.Errorf("falta el comando")
+	}
+	if dir, ok := cdIfNeeded(a.Command); ok {
+		if !filepath.IsAbs(dir) {
+			dir = ws.Resolve(dir)
+		}
+		ws.SetCwd(dir)
+		return "cwd: " + ws.Cwd(), nil
 	}
 	cctx := ctx
 	if a.Timeout != "" {
@@ -143,6 +150,7 @@ func runCommand(ctx context.Context, a toolArgs) (string, error) {
 		defer cancel()
 	}
 	cmd := exec.CommandContext(cctx, "sh", "-c", a.Command)
+	cmd.Dir = ws.Cwd()
 	out, err := cmd.CombinedOutput()
 	s := truncate(string(out), 30000)
 	if err != nil {
@@ -154,11 +162,12 @@ func runCommand(ctx context.Context, a toolArgs) (string, error) {
 	return s, nil
 }
 
-func readFile(ctx context.Context, a toolArgs) (string, error) {
+func readFile(ctx context.Context, ws *Workspace, a toolArgs) (string, error) {
 	if a.Path == "" {
 		return "", fmt.Errorf("falta la ruta")
 	}
-	data, err := os.ReadFile(a.Path)
+	p := ws.Resolve(a.Path)
+	data, err := os.ReadFile(p)
 	if err != nil {
 		return "", err
 	}
@@ -188,24 +197,26 @@ func readFile(ctx context.Context, a toolArgs) (string, error) {
 	return truncate(sb.String(), 60000), nil
 }
 
-func writeFile(ctx context.Context, a toolArgs) (string, error) {
+func writeFile(ctx context.Context, ws *Workspace, a toolArgs) (string, error) {
 	if a.Path == "" {
 		return "", fmt.Errorf("falta la ruta")
 	}
-	if err := os.MkdirAll(filepath.Dir(a.Path), 0o755); err != nil {
+	p := ws.Resolve(a.Path)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(a.Path, []byte(a.Content), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(a.Content), 0o644); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("escrito %s (%d bytes)", a.Path, len(a.Content)), nil
 }
 
-func listDir(ctx context.Context, a toolArgs) (string, error) {
+func listDir(ctx context.Context, ws *Workspace, a toolArgs) (string, error) {
 	path := a.Path
 	if path == "" {
 		path = "."
 	}
+	path = ws.Resolve(path)
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		return "", err
@@ -225,11 +236,12 @@ func listDir(ctx context.Context, a toolArgs) (string, error) {
 	return strings.Join(lines, "\n"), nil
 }
 
-func searchFiles(ctx context.Context, a toolArgs) (string, error) {
+func searchFiles(ctx context.Context, ws *Workspace, a toolArgs) (string, error) {
 	root := a.Path
 	if root == "" {
 		root = "."
 	}
+	root = ws.Resolve(root)
 	pattern := a.Pattern
 	if pattern == "" {
 		return "", fmt.Errorf("falta el patrón")

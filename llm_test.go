@@ -104,7 +104,7 @@ func TestAgentLoop(t *testing.T) {
 	p := NewProvider(Config{BaseURL: srv.URL, Model: "test", Tools: true, Temperature: 0.2})
 
 	appr := &alwaysApprove{}
-	agent := &Agent{prov: p, config: Config{}, system: "test", approver: appr}
+	agent := &Agent{prov: p, config: Config{}, system: "test", ws: newWorkspace(), approver: appr}
 
 	content, hist, err := agent.Chat(context.Background(), nil, "corre algo")
 	if err != nil {
@@ -132,7 +132,8 @@ type alwaysApprove struct{}
 func (a *alwaysApprove) Approve(name, args string) (bool, error) { return true, nil }
 
 func TestExecTool(t *testing.T) {
-	out, err := execTool(context.Background(), "run_command", json.RawMessage(`{"command":"echo max_test","timeout":"5s"}`))
+	ws := newWorkspace()
+	out, err := execTool(context.Background(), ws, "run_command", json.RawMessage(`{"command":"echo max_test","timeout":"5s"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,16 +143,17 @@ func TestExecTool(t *testing.T) {
 }
 
 func TestWriteReadFile(t *testing.T) {
+	ws := newWorkspace()
 	dir := t.TempDir()
 	path := dir + "/sub/nested.go"
-	out, err := execTool(context.Background(), "write_file", json.RawMessage(fmt.Sprintf(`{"path":%q,"content":"package p\n"}`, path)))
+	out, err := execTool(context.Background(), ws, "write_file", json.RawMessage(fmt.Sprintf(`{"path":%q,"content":"package p\n"}`, path)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out, "escrito") {
 		t.Fatalf("out = %q", out)
 	}
-	out, err = execTool(context.Background(), "read_file", json.RawMessage(fmt.Sprintf(`{"path":%q}`, path)))
+	out, err = execTool(context.Background(), ws, "read_file", json.RawMessage(fmt.Sprintf(`{"path":%q}`, path)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,6 +163,7 @@ func TestWriteReadFile(t *testing.T) {
 }
 
 func TestSearchFiles(t *testing.T) {
+	ws := newWorkspace()
 	dir := t.TempDir()
 	content := []byte("linea uno\nlinea bug aquí\n")
 	if err := writePath(dir+"/a.go", content); err != nil {
@@ -169,12 +172,46 @@ func TestSearchFiles(t *testing.T) {
 	if err := writePath(dir+"/b.txt", []byte("sin coincidencia\n")); err != nil {
 		t.Fatal(err)
 	}
-	out, err := searchFiles(context.Background(), toolArgs{Path: dir, Pattern: "bug"})
+	out, err := searchFiles(context.Background(), ws, toolArgs{Path: dir, Pattern: "bug"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out, "a.go:2") || strings.Contains(out, "b.txt") {
 		t.Fatalf("out = %q", out)
+	}
+}
+
+func TestWorkspaceCd(t *testing.T) {
+	dir := t.TempDir()
+	ws := newWorkspace()
+	ws.SetCwd(dir)
+	sub := dir + "/ia"
+	out, err := runCommand(context.Background(), ws, toolArgs{Command: "mkdir -p ia && cd ia && pwd", Timeout: "5s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != sub {
+		t.Fatalf("pwd interno = %q, esperado %q", out, sub)
+	}
+	if ws.Cwd() != dir {
+		t.Fatalf("cwd NO debe cambiar con cd interno: %q", ws.Cwd())
+	}
+	out, err = runCommand(context.Background(), ws, toolArgs{Command: "cd ia", Timeout: "5s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "cwd:") {
+		t.Fatalf("salida cd = %q", out)
+	}
+	if ws.Cwd() != sub {
+		t.Fatalf("cwd tras cd = %q, esperado %q", ws.Cwd(), sub)
+	}
+	out, err = runCommand(context.Background(), ws, toolArgs{Command: "pwd", Timeout: "5s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != sub {
+		t.Fatalf("pwd persistido = %q, esperado %q", out, sub)
 	}
 }
 
@@ -242,7 +279,7 @@ func TestAgentNudge(t *testing.T) {
 	})
 	defer srv.Close()
 	p := NewProvider(Config{BaseURL: srv.URL, Model: "test", Tools: true, Temperature: 0.2})
-	agent := &Agent{prov: p, config: Config{Tools: true}, system: "test", approver: &alwaysApprove{}}
+	agent := &Agent{prov: p, config: Config{Tools: true}, system: "test", ws: newWorkspace(), approver: &alwaysApprove{}}
 	content, hist, err := agent.Chat(context.Background(), nil, "haz un hello world en C")
 	if err != nil {
 		t.Fatal(err)
@@ -272,7 +309,7 @@ func TestAgentFenceFallback(t *testing.T) {
 	})
 	defer srv.Close()
 	p := NewProvider(Config{BaseURL: srv.URL, Model: "test", Tools: true, Temperature: 0.2})
-	agent := &Agent{prov: p, config: Config{Tools: true}, system: "test", approver: &alwaysApprove{}}
+	agent := &Agent{prov: p, config: Config{Tools: true}, system: "test", ws: newWorkspace(), approver: &alwaysApprove{}}
 
 	content, hist, err := agent.Chat(context.Background(), nil, "haz un hello world")
 	if err != nil {
@@ -292,5 +329,33 @@ func TestAgentFenceFallback(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("falta el resultado del comando en el historial: %+v", hist)
+	}
+}
+
+func TestAgentNoNudgeAfterExecute(t *testing.T) {
+	calls := 0
+	srv := fakeLLM(t, func(last string) string {
+		calls++
+		if calls == 1 {
+			return sseChunks(map[string]any{"role": "assistant",
+				"content": "Ejecuto:\n\n```bash\necho hice_algo\n```"})
+		}
+		return sseChunks(map[string]any{"role": "assistant", "content": "Listo, ya está hecho."})
+	})
+	defer srv.Close()
+	p := NewProvider(Config{BaseURL: srv.URL, Model: "test", Tools: true, Temperature: 0.2})
+	agent := &Agent{prov: p, config: Config{Tools: true}, system: "test", ws: newWorkspace(), approver: &alwaysApprove{}}
+
+	content, hist, err := agent.Chat(context.Background(), nil, "haz un hello world")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != "Listo, ya está hecho." {
+		t.Fatalf("content = %q", content)
+	}
+	for _, m := range hist {
+		if m.Content == nudgeMsg {
+			t.Fatal("no debería nudgar si ya ejecutó algo")
+		}
 	}
 }

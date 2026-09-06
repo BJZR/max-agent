@@ -46,6 +46,7 @@ func runTUI(cfg Config, prov *Provider, system string) error {
 		prov:        prov,
 		config:      cfg,
 		system:      system,
+		ws:          newWorkspace(),
 		approver:    &termApprover{in: sc, out: out, auto: cfg.AutoApprove || !isTTY(os.Stdin)},
 		onToken:     func(t string) { fmt.Fprint(out, t) },
 		onReasoning: func(r string) { fmt.Fprintf(out, "\033[2m%s\033[0m", r) },
