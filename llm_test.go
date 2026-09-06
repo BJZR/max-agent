@@ -184,3 +184,55 @@ func writePath(path string, data []byte) error {
 	}
 	return os.WriteFile(path, data, 0o644)
 }
+
+func TestFencedCommands(t *testing.T) {
+	s := "texto\n```bash\nls -la\n```\n```sh\necho hola\ncd /tmp\n```\n```c\nint x = 1;\n```\ny fin"
+	got := fencedCommands(s)
+	want := []string{"ls -la", "echo hola\ncd /tmp"}
+	if len(got) != len(want) {
+		t.Fatalf("got %q want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %q want %q", got, want)
+		}
+	}
+	if len(fencedCommands("sin bloques")) != 0 {
+		t.Fatal("no debería haber comandos")
+	}
+}
+
+func TestAgentFenceFallback(t *testing.T) {
+	calls := 0
+	srv := fakeLLM(t, func(last string) string {
+		calls++
+		if calls == 1 {
+			return sseChunks(map[string]any{"role": "assistant",
+				"content": "Hago un hello world:\n\n```bash\necho hello_max_fence\n```"})
+		}
+		return sseChunks(map[string]any{"role": "assistant", "content": "Listo, tarea completada."})
+	})
+	defer srv.Close()
+	p := NewProvider(Config{BaseURL: srv.URL, Model: "test", Tools: true, Temperature: 0.2})
+	agent := &Agent{prov: p, config: Config{Tools: true}, system: "test", approver: &alwaysApprove{}}
+
+	content, hist, err := agent.Chat(context.Background(), nil, "haz un hello world")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != "Listo, tarea completada." {
+		t.Fatalf("content = %q", content)
+	}
+	if calls < 2 {
+		t.Fatalf("calls = %d, esperaba que el loop continuara tras ejecutar la fence", calls)
+	}
+	found := false
+	for _, m := range hist {
+		if strings.Contains(m.Content, "Resultado de los comandos") && strings.Contains(m.Content, "hello_max_fence") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("falta el resultado del comando en el historial: %+v", hist)
+	}
+}

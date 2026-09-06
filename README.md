@@ -46,6 +46,9 @@ También se puede editar `prompts/default.md` para cambiar la personalidad del a
 
 Las herramientas peligrosas piden confirmación (`y/N`). Con `-yes` o `auto_approve: true` se ejecutan solas. Si el stdin no es un terminal (pipe), se auto-aprueban.
 
+### API de herramientas nativas + fallback de code-fences
+MAX usa `tool_calls` nativos cuando el servidor/modelo los soporta, y además un **fallback que funciona con cualquier modelo**: si la respuesta no trae `tool_calls` pero tiene comandos dentro de bloques ```bash``` (según el system prompt), MAX los extrae, los manda por el mismo flujo de aprobación/ejecución y le devuelve la salida al modelo para continuar. Esto hace que un llama-server local con un modelo 3B sin tool-support real también pueda trabajar.
+
 ## Comandos TUI
 `/help` `/tools` `/clear` `/exit`
 
