@@ -37,13 +37,40 @@ type Agent struct {
 
 const maxSteps = 12
 
+var taskWords = []string{
+	"haz", "hace", "hacer", "crea", "crear", "genera", "escribe", "escríbeme", "implementa",
+	"instala", "arregla", "corrige", "corrigeme", "repara", "busca", "analiza", "investiga",
+	"compila", "ejecuta", "corre", "prueba", "muestra", "verifica", "modifica", "actualiza",
+	"agrega", "añade", "elimina", "borra", "quita", "cambia", "build", "install", "test",
+}
+
+func looksLikeTask(s string) bool {
+	low := strings.ToLower(s)
+	for _, w := range taskWords {
+		if strings.Contains(low, w) {
+			return true
+		}
+	}
+	return false
+}
+
+const nudgeMsg = "No ejecutaste nada todavía. Si la petición toca la máquina, hazlo AHORA: envía los comandos en un bloque ```bash (primero explora con ls, cat, grep -n, rg; verifica antes de actuar). No repitas la explicación: ejecuta."
+
 func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, []Msg, error) {
 	msgs := make([]Msg, 0, len(history)+maxSteps+2)
 	msgs = append(msgs, Msg{Role: "system", Content: a.system})
 	msgs = append(msgs, history...)
 	msgs = append(msgs, Msg{Role: "user", Content: input})
 
+	nudged := false
 	for step := 0; step < maxSteps; step++ {
+		lastUser := input
+		for i := len(msgs) - 1; i >= 0; i-- {
+			if msgs[i].Role == "user" {
+				lastUser = msgs[i].Content
+				break
+			}
+		}
 		resp, err := a.prov.Chat(ctx, msgs, a.onToken, a.onReasoning)
 		if err != nil {
 			return "", msgs[1:], err
@@ -116,7 +143,23 @@ func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, 
 				}
 			}
 		}
-		return resp.Content, msgs[1:], nil
+		if a.config.Tools && !nudged && looksLikeTask(lastUser) && strings.TrimSpace(resp.Content) != "" {
+			nudged = true
+			msgs = append(msgs, Msg{Role: "user", Content: nudgeMsg})
+			continue
+		}
+		return resp.Content, filterNudge(msgs[1:]), nil
 	}
-	return "", msgs[1:], fmt.Errorf("límite de pasos de agente alcanzado (%d)", maxSteps)
+	return "", filterNudge(msgs[1:]), fmt.Errorf("límite de pasos de agente alcanzado (%d)", maxSteps)
+}
+
+func filterNudge(msgs []Msg) []Msg {
+	out := make([]Msg, 0, len(msgs))
+	for _, m := range msgs {
+		if m.Role == "user" && m.Content == nudgeMsg {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
 }

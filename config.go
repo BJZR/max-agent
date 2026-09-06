@@ -15,6 +15,7 @@ type Config struct {
 	NumCtx       int     `yaml:"num_ctx"`
 	Temperature  float64 `yaml:"temperature"`
 	Tools        bool    `yaml:"tools"`
+	Context      bool    `yaml:"context"`
 	AutoApprove  bool    `yaml:"auto_approve"`
 	ServerAddr   string  `yaml:"server_addr"`
 }
@@ -27,6 +28,7 @@ func defaultConfig() Config {
 		NumCtx:       8192,
 		Temperature:  0.2,
 		Tools:        true,
+		Context:      true,
 		AutoApprove:  false,
 		ServerAddr:   ":8090",
 	}

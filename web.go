@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 )
@@ -93,6 +94,7 @@ func runWeb(cfg Config, prov *Provider, system string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", app.handleStatic)
 	mux.HandleFunc("/api/model", app.handleModel)
+	mux.HandleFunc("/api/info", app.handleInfo)
 	mux.HandleFunc("/api/chat", app.handleChat)
 	mux.HandleFunc("/api/pending", app.handlePendingList)
 	mux.HandleFunc("/api/pending/", app.handlePendingAction)
@@ -124,6 +126,15 @@ func (app *webApp) handleStatic(w http.ResponseWriter, r *http.Request) {
 
 func (app *webApp) handleModel(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"model": app.cfg.Model})
+}
+
+func (app *webApp) handleInfo(w http.ResponseWriter, r *http.Request) {
+	cwd, _ := os.Getwd()
+	json.NewEncoder(w).Encode(map[string]any{
+		"model": app.cfg.Model,
+		"cwd":   cwd,
+		"tools": app.cfg.Tools,
+	})
 }
 
 func (app *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +173,9 @@ func (app *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 	used := p.Session != "" && history != nil
 	if !used {
 		history = p.Messages
+	}
+	if !used && app.cfg.Context && app.cfg.Tools {
+		history = append([]Msg{{Role: "user", Content: "[Contexto del entorno (dado por MAX)]\n" + envSnapshot()}}, history...)
 	}
 
 	sid := p.Session

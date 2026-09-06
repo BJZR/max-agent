@@ -202,6 +202,64 @@ func TestFencedCommands(t *testing.T) {
 	}
 }
 
+func TestEnvSnapshot(t *testing.T) {
+	s := envSnapshot()
+	if s == "" {
+		t.Fatal("envSnapshot vacío")
+	}
+	if !strings.Contains(s, "directorio de trabajo") {
+		t.Fatalf("falta cwd en snapshot: %q", s[:80])
+	}
+}
+
+func TestLooksLikeTask(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"hazme un hello world", true},
+		{"busca un bug", true},
+		{"instala gcc", true},
+		{"cuál es el significado de la vida", false},
+		{"explica qué es un Mutex", false},
+		{"haz build de este archivo", true},
+	}
+	for _, c := range cases {
+		if got := looksLikeTask(c.in); got != c.want {
+			t.Errorf("looksLikeTask(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+func TestAgentNudge(t *testing.T) {
+	calls := 0
+	srv := fakeLLM(t, func(last string) string {
+		calls++
+		return sseChunks(map[string]any{
+			"role":    "assistant",
+			"content": "Primero debo crear el archivo. Aquí tienes los pasos...",
+		})
+	})
+	defer srv.Close()
+	p := NewProvider(Config{BaseURL: srv.URL, Model: "test", Tools: true, Temperature: 0.2})
+	agent := &Agent{prov: p, config: Config{Tools: true}, system: "test", approver: &alwaysApprove{}}
+	content, hist, err := agent.Chat(context.Background(), nil, "haz un hello world en C")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls < 2 {
+		t.Fatalf("calls = %d, esperaba al menos un nudge", calls)
+	}
+	if content == "" {
+		t.Fatal("sin respuesta final")
+	}
+	for _, m := range hist {
+		if m.Content == nudgeMsg {
+			t.Fatal("el nudge no debería quedar en el historial devuelto")
+		}
+	}
+}
+
 func TestAgentFenceFallback(t *testing.T) {
 	calls := 0
 	srv := fakeLLM(t, func(last string) string {

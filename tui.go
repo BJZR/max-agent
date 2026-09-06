@@ -61,6 +61,13 @@ func runTUI(cfg Config, prov *Provider, system string) error {
 
 	fmt.Fprintf(out, "\033[1;32mMAX\033[0m — agente minimalista · modelo \033[36m%s\033[0m · /help\n", cfg.Model)
 	history := []Msg{}
+	seed := func() []Msg {
+		if cfg.Context && cfg.Tools {
+			return []Msg{{Role: "user", Content: "[Contexto del entorno (dado por MAX)]\n" + envSnapshot()}}
+		}
+		return nil
+	}
+	history = seed()
 	for {
 		fmt.Fprintf(out, "\033[36m»\033[0m ")
 		if !sc.Scan() {
@@ -74,7 +81,7 @@ func runTUI(cfg Config, prov *Provider, system string) error {
 		case line == "/exit" || line == "/quit":
 			return nil
 		case line == "/clear":
-			history = nil
+			history = seed()
 			fmt.Fprintln(out)
 			continue
 		case line == "/help":
