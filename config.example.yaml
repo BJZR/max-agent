@@ -1,0 +1,14 @@
+# MAX — configuración
+# Copia a max.yaml y ajustá. Todo es opcional; los defaults aparecen abajo.
+
+model: qwen2.5-coder:7b
+base_url: http://localhost:8080/v1 # llama-server · ollama · openrouter · groq · etc.
+api_key: ""                        # solo necesaria en APIs remotas
+
+system_prompt: prompts/default.md  # archivo editable con el system prompt
+temperature: 0.2
+
+tools: true                        # herramientas (ejecutar, leer/escribir, buscar)
+auto_approve: false                # true = ejecuta sin preguntar
+
+server_addr: ":8090"               # solo para el modo web
