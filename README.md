@@ -18,12 +18,10 @@ llama-server -m <modelo>.gguf --port 8080   # modelo local
 ./max
 ```
 
-### Con un llama-server remoto (VPS) por túnel SSH
-Si el modelo corre en otra máquina, redirigí el puerto y MAX lo usa como local:
+### Con un servidor remoto
+Si el modelo corre en otra máquina, apuntá `-base-url` a la URL del servidor:
 ```sh
-ssh -L 8080:localhost:8080 usuario@ip.vps
-# en otra terminal, ya con MAX apuntando al túnel:
-./max
+./max -base-url http://IP_DEL_SERVIDOR:8080/v1
 ```
 
 ### Modo web
