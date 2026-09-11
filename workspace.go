@@ -47,9 +47,14 @@ func (w *Workspace) Resolve(p string) string {
 }
 
 // cdIfNeeded devuelve (nuevoCwd, ok) si el comando es un simple "cd <dir>".
+// Solo aplica si el comando es EXCLUSIVAMENTE un cd (sn línea o lista de comandos,
+// p.ej. "cd c && gcc ..."), para no tragarse el resto del comando como ruta.
 func cdIfNeeded(cmd string) (string, bool) {
 	t := strings.TrimSpace(cmd)
 	if !(t == "cd" || strings.HasPrefix(t, "cd ")) {
+		return "", false
+	}
+	if strings.ContainsAny(t, "\n;&|") {
 		return "", false
 	}
 	rest := strings.TrimSpace(strings.TrimPrefix(t, "cd"))

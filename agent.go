@@ -60,12 +60,14 @@ const nudgeMsg = "No ejecutaste nada todavía. Si la petición toca la máquina,
 func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, []Msg, error) {
 	msgs := make([]Msg, 0, len(history)+maxSteps+2)
 	msgs = append(msgs, Msg{Role: "system", Content: a.system})
-	msgs = append(msgs, history...)
+	msgs = append(msgs, condense(history, ctxCharsBudget)...)
 	msgs = append(msgs, Msg{Role: "user", Content: input})
 
 	nudged := false
 	anythingExecuted := false
+	attempted := map[string]bool{}
 	for step := 0; step < maxSteps; step++ {
+		msgs = condense(msgs, ctxCharsBudget)
 		lastUser := input
 		for i := len(msgs) - 1; i >= 0; i-- {
 			if msgs[i].Role == "user" {
@@ -114,7 +116,15 @@ func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, 
 			if cmds := fencedCommands(resp.Content); len(cmds) > 0 {
 				var results strings.Builder
 				executed := false
+				failed := false
 				for _, c := range cmds {
+					if attempted[c] {
+						results.WriteString("$ " + c + "\n(BLOQUEADO: este comando ya falló y no se re-ejecuta. Estás en " + a.ws.Cwd() + ". Probá un comando NUEVO y más simple.)\n")
+						failed = true
+						executed = true
+						continue
+					}
+					attempted[c] = true
 					args, _ := json.Marshal(map[string]any{"command": c, "timeout": "120s"})
 					if a.onTool != nil {
 						a.onTool("run_command", c)
@@ -135,14 +145,18 @@ func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, 
 					}
 					if err != nil {
 						out = "error: " + err.Error() + "\n" + out
+						failed = true
 					}
 					results.WriteString("$ " + c + "\n" + out + "\n")
 					executed = true
 					anythingExecuted = true
 				}
 				if executed {
-					msgs = append(msgs, Msg{Role: "user",
-						Content: "Resultado de los comandos que ejecutaste:\n" + strings.TrimSpace(results.String())})
+					msg := "Resultado de los comandos que ejecutaste:\n" + strings.TrimSpace(results.String())
+					if failed {
+						msg += "\n\nAl menos un comando falló. Estás en " + a.ws.Cwd() + ". No repitas el comando que falló: empezá por el PRIMER error. Comandos CORTOS, de a uno: si falta la carpeta, creala (mkdir -p). Si falta un header/import, agregalo antes de compilar. Reintentá con un comando distinto."
+					}
+					msgs = append(msgs, Msg{Role: "user", Content: msg})
 					continue
 				}
 			}
@@ -165,5 +179,38 @@ func filterNudge(msgs []Msg) []Msg {
 		}
 		out = append(out, m)
 	}
+	return out
+}
+
+const ctxCharsBudget = 16000
+
+func condense(msgs []Msg, budget int) []Msg {
+	if len(msgs) == 0 {
+		return msgs
+	}
+	head := []Msg{msgs[0]}
+	if len(msgs) > 1 && msgs[1].Role == "user" && strings.HasPrefix(msgs[1].Content, "[Contexto del entorno") {
+		head = append(head, msgs[1])
+	}
+	total := 0
+	for _, m := range head {
+		total += len(m.Content)
+	}
+	var tail []Msg
+	for i := len(msgs) - 1; i >= len(head); i-- {
+		m := msgs[i]
+		if total+len(m.Content) > budget && len(tail) >= 2 {
+			break
+		}
+		total += len(m.Content)
+		tail = append([]Msg{m}, tail...)
+	}
+	out := make([]Msg, 0, len(msgs))
+	out = append(out, head...)
+	if len(head)+len(tail) < len(msgs) {
+		out = append(out, Msg{Role: "user",
+			Content: "Parte de la conversación anterior se omitió por el límite de contexto. Continuá con la tarea usando lo último que se dijo."})
+	}
+	out = append(out, tail...)
 	return out
 }

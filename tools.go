@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -151,9 +152,80 @@ func truncate(s string, n int) string {
 	return s[:n] + fmt.Sprintf("\n… (%d chars omitidos)", len(s)-n)
 }
 
+const (
+	defaultCmdTimeout = 60 * time.Second
+	maxCmdTimeout     = 600 * time.Second
+)
+
+// interactiveBlocked devuelve un mensaje si el comando colgaría la sesión
+// (editor, pager, REPL, lectura de stdin o tail -f), o "" si es seguro.
+func interactiveBlocked(cmd string) string {
+	fields := strings.Fields(strings.TrimSpace(cmd))
+	if len(fields) == 0 {
+		return ""
+	}
+	name := strings.ToLower(fields[0])
+	if p := filepath.Base(name); p != name {
+		name = p
+	}
+	editors := map[string]string{
+		"vim":     "usa `cat > archivo <<'EOF'` o la herramienta write_file",
+		"vi":      "usa `cat > archivo <<'EOF'` o la herramienta write_file",
+		"nano":    "escribe con write_file o `cat > archivo <<'EOF'`",
+		"emacs":   "escribe con write_file",
+		"less":    "usa `cat` para leer",
+		"more":    "usa `cat` para leer",
+		"top":     "usa `ps aux | head -20`",
+		"htop":    "usa `ps aux | head -20`",
+		"btop":    "usa `ps aux | head -20`",
+		"watch":   "ejecutá el comando directo; sin watch (se queda repitiendo)",
+		"ssh":     "no abras sesión interactiva; ejecutá el comando remoto de una vez",
+		"telnet":  "no permitido",
+		"mc":      "no permitido",
+		"irb":     "usa `ruby script.rb`",
+		"ipython": "usa `python3 script.py`",
+	}
+	if hint, ok := editors[name]; ok && len(fields) >= 1 {
+		return fmt.Sprintf("%s (%s)", fields[0], hint)
+	}
+	if len(fields) == 1 {
+		hint := map[string]string{
+			"cat":     "cat sin argumentos lee de teclado y no termina; pasale un archivo p. ej. cat ruta.txt",
+			"yes":     "yes no termina nunca",
+			"python":  "ejecutá con `python -c '...'` o `python script.py`",
+			"python3": "ejecutá con `python3 -c '...'` o `python3 script.py`",
+			"node":    "ejecutá con `node -e '...'` o `node script.js`",
+			"nodejs":  "ejecutá con `nodejs -e '...'` o `nodejs script.js`",
+			"bun":     "ejecutá con `bun -e '...'` o `bun script.ts`",
+			"deno":    "ejecutá con `deno run script.ts`",
+			"fish":    "los comandos corren en sh; evitá fish interactivo",
+			"sh":      "si querés correr un script: `sh script.sh`",
+			"bash":    "si querés correr un script: `bash script.sh`",
+			"zsh":     "si querés correr un script: `zsh script.sh`",
+			"sqlite3": "pasá la consulta: `sqlite3 base.db 'SELECT 1;'`",
+			"mysql":   "pasá la consulta con -e",
+			"psql":    "pasá la consulta con -c",
+		}[name]
+		if hint != "" {
+			return fmt.Sprintf("%s (%s)", fields[0], hint)
+		}
+	}
+	if name == "tail" {
+		for _, f := range fields[1:] {
+			if f == "--follow" || (len(f) > 1 && f[0] == '-' && !strings.HasPrefix(f, "--") && (strings.ContainsRune(f, 'f') || strings.ContainsRune(f, 'F'))) {
+				return "tail -f/-F mira el archivo sin terminar; usá `tail -n 20 ruta`"
+			}
+		}
+	}
+	return ""
+}
+
 func runCommand(ctx context.Context, ws *Workspace, a toolArgs) (string, error) {
 	if strings.TrimSpace(a.Command) == "" {
 		return "", fmt.Errorf("falta el comando")
+	}
+	if hint := interactiveBlocked(a.Command); hint != "" {
+		return "", fmt.Errorf("no puedo ejecutar eso (cuelga la sesión): %s", hint)
 	}
 	if dir, ok := cdIfNeeded(a.Command); ok {
 		if !filepath.IsAbs(dir) {
@@ -162,23 +234,32 @@ func runCommand(ctx context.Context, ws *Workspace, a toolArgs) (string, error) 
 		ws.SetCwd(dir)
 		return "cwd: " + ws.Cwd(), nil
 	}
-	cctx := ctx
+	d := defaultCmdTimeout
 	if a.Timeout != "" {
-		d, err := time.ParseDuration(a.Timeout)
-		if err != nil {
-			return "", fmt.Errorf("timeout inválido: %v", err)
+		if p, err := time.ParseDuration(a.Timeout); err == nil && p > 0 {
+			d = p
 		}
-		var cancel context.CancelFunc
-		cctx, cancel = context.WithTimeout(ctx, d)
-		defer cancel()
 	}
+	if d > maxCmdTimeout {
+		d = maxCmdTimeout
+	}
+	cctx, cancel := context.WithTimeout(ctx, d)
+	defer cancel()
 	cmd := exec.CommandContext(cctx, "sh", "-c", a.Command)
 	cmd.Dir = ws.Cwd()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+	cmd.WaitDelay = 2 * time.Second
 	out, err := cmd.CombinedOutput()
 	s := truncate(string(out), 30000)
 	if err != nil {
 		if cctx.Err() != nil {
-			return s, fmt.Errorf("timeout: %v", cctx.Err())
+			return s, fmt.Errorf("se agotó el tiempo (%s máx). Si el comando era correcto, partilo en pasos más cortos", d)
 		}
 		return s, fmt.Errorf("salida: %v", err)
 	}

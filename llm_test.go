@@ -257,6 +257,74 @@ func TestStoreMissingFile(t *testing.T) {
 	}
 }
 
+func TestInteractiveBlockedClassify(t *testing.T) {
+	cases := []struct {
+		cmd  string
+		want bool // true = bloqueado
+	}{
+		{"vim holaa.txt", true},
+		{"less log", true},
+		{"top", true},
+		{"htop", true},
+		{"bash /tmp/x", false},
+		{"bash", true},
+		{"sh", true},
+		{"python3", true},
+		{"python3 -c 'print(1)'", false},
+		{"python3 script.py", false},
+		{"node", true},
+		{"node -e 'console.log(1)'", false},
+		{"cat", true},
+		{"cat ruta.txt", false},
+		{"cat -n ruta.txt", false},
+		{"tail -f /var/log/x", true},
+		{"tail -F /var/log/x", true},
+		{"tail --follow /var/log/x", true},
+		{"tail -n 5 ruta.txt", false},
+		{"yes", true},
+		{"yes | head -n 2", false},
+	}
+	for _, c := range cases {
+		got := interactiveBlocked(c.cmd) != ""
+		if got != c.want {
+			t.Errorf("interactiveBlocked(%q) bloqueado=%v, want %v", c.cmd, got, c.want)
+		}
+	}
+}
+
+func TestRunCommandRejectsInteractive(t *testing.T) {
+	ws := newWorkspace()
+	dir := t.TempDir()
+	ws.SetCwd(dir)
+	out, err := runCommand(context.Background(), ws, toolArgs{Command: "vim x.txt"})
+	if err == nil || !strings.Contains(err.Error(), "cuelga la sesión") {
+		t.Fatalf("esperaba rechazo de vim, got out=%q err=%v", out, err)
+	}
+}
+
+func TestRunCommandTimeout(t *testing.T) {
+	ws := newWorkspace()
+	start := time.Now()
+	_, err := runCommand(context.Background(), ws, toolArgs{Command: "sleep 5", Timeout: "300ms"})
+	if err == nil || !strings.Contains(err.Error(), "se agotó el tiempo") {
+		t.Fatalf("esperaba timeout, got %v", err)
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Fatalf("el timeout tardó demasiado en cortar: %v", time.Since(start))
+	}
+}
+
+func TestRunCommandBadTimeoutFallsBack(t *testing.T) {
+	ws := newWorkspace()
+	out, err := runCommand(context.Background(), ws, toolArgs{Command: "echo ok_fallback", Timeout: "noesduracion"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "ok_fallback" {
+		t.Fatalf("out = %q", out)
+	}
+}
+
 func TestWorkspaceCd(t *testing.T) {
 	dir := t.TempDir()
 	ws := newWorkspace()
@@ -291,11 +359,130 @@ func TestWorkspaceCd(t *testing.T) {
 	}
 }
 
+func TestCdIfNeededStrict(t *testing.T) {
+	dir := t.TempDir()
+	ws := newWorkspace()
+	ws.SetCwd(dir)
+	if err := os.MkdirAll(dir+"/c", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	compound := "cd c\ntouch created_in_compound\nls"
+	out, err := runCommand(context.Background(), ws, toolArgs{Command: compound, Timeout: "5s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.Cwd() != dir {
+		t.Fatalf("cd compuesto multi-línea NO debe cambiar cwd: %q", ws.Cwd())
+	}
+	if !strings.Contains(out, "created_in_compound") {
+		t.Fatalf("el comando compuesto no se ejecutó completo: %q", out)
+	}
+	if _, err := os.Stat(dir + "/c/created_in_compound"); err != nil {
+		t.Fatalf("el archivo no se creó dentro de c/: %v", err)
+	}
+	if _, ok := cdIfNeeded("cd c && gcc x.c"); ok {
+		t.Fatal("cd con && no debe tratarse como cd suelto")
+	}
+	if _, ok := cdIfNeeded("cd c\necho x"); ok {
+		t.Fatal("cd multi-línea no debe tratarse como cd suelto")
+	}
+	if _, ok := cdIfNeeded("cd somewhere"); !ok {
+		t.Fatal("cd simple debe reconocerse")
+	}
+}
+
 func writePath(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+func TestCondense(t *testing.T) {
+	env := Msg{Role: "user", Content: "[Contexto del entorno (dado por MAX)]\na"}
+	sys := Msg{Role: "system", Content: "sys"}
+	fat := func(i int) Msg {
+		return Msg{Role: "user", Content: strings.Repeat("x", 1000) + fmt.Sprintf(" %d", i)}
+	}
+	in := []Msg{sys, env, fat(1), fat(2), fat(3), fat(4)}
+	out := condense(in, 3000)
+	if out[0].Role != "system" || out[0].Content != "sys" {
+		t.Fatalf("system debe preservarse al inicio")
+	}
+	if out[1].Role != "user" || !strings.HasPrefix(out[1].Content, "[Contexto del entorno") {
+		t.Fatalf("contexto de entorno debe preservarse: %+v", out[:2])
+	}
+	if len(out) < 4 {
+		t.Fatalf("la cola recortada quedó muy corta: %d", len(out))
+	}
+	last := out[len(out)-1]
+	if !strings.Contains(last.Content, "4") {
+		t.Fatalf("el último mensaje debe conservarse: %q", last.Content)
+	}
+	hasMarker := false
+	for _, m := range out {
+		if strings.Contains(m.Content, "se omitió") {
+			hasMarker = true
+		}
+	}
+	if !hasMarker {
+		t.Fatal("debe aparecer el aviso de omisión")
+	}
+}
+
+func TestAgentDedupFailedCmd(t *testing.T) {
+	calls := 0
+	fails := &failingCmd{cmd: "false"}
+	srv := fakeLLM(t, func(last string) string {
+		calls++
+		switch calls {
+		case 1, 2:
+			return sseChunks(map[string]any{"role": "assistant",
+				"content": "Primero:\n\n```bash\nfalse\n```"})
+		}
+		return sseChunks(map[string]any{"role": "assistant",
+			"content": "Tienes razón, probaré otra cosa."})
+	})
+	defer srv.Close()
+	p := NewProvider(Config{BaseURL: srv.URL, Model: "test", Tools: true, Temperature: 0.2})
+	agent := &Agent{prov: p, config: Config{Tools: true}, system: "test", ws: newWorkspace(), approver: fails}
+
+	content, _, err := agent.Chat(context.Background(), nil, "hola")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content == "" || content != "Tienes razón, probaré otra cosa." {
+		t.Fatalf("content = %q", content)
+	}
+	if fails.runs != 1 {
+		t.Fatalf("false se ejecutó %d veces, esperaba 1 (dedup)", fails.runs)
+	}
+}
+
+type failingCmd struct {
+	cmd  string
+	runs int
+}
+
+func (f *failingCmd) Approve(name, args string) (bool, error) {
+	if f.cmd != "" && strings.TrimSpace(args) == f.cmd {
+		f.runs++
+	}
+	return true, nil
+}
+
+func TestResolve(t *testing.T) {
+	ws := newWorkspace()
+	ws.SetCwd("/a/b")
+	if p := ws.Resolve("x"); p != "/a/b/x" {
+		t.Fatalf("resolve relativa = %q", p)
+	}
+	if p := ws.Resolve("/tmp"); p != "/tmp" {
+		t.Fatalf("resolve absoluta = %q", p)
+	}
+	if p := ws.Resolve(""); p != "/a/b" {
+		t.Fatalf("resolve vacía = %q", p)
+	}
 }
 
 func TestFencedCommands(t *testing.T) {
