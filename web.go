@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -117,6 +118,8 @@ func runWeb(cfg Config, prov *Provider, system string) {
 	mux.HandleFunc("/api/model", app.handleModel)
 	mux.HandleFunc("/api/info", app.handleInfo)
 	mux.HandleFunc("/api/chat", app.handleChat)
+	mux.HandleFunc("/api/sessions", app.handleSessions)
+	mux.HandleFunc("/api/sessions/", app.handleSession)
 	mux.HandleFunc("/api/pending", app.handlePendingList)
 	mux.HandleFunc("/api/pending/", app.handlePendingAction)
 
@@ -158,6 +161,99 @@ func (app *webApp) handleInfo(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func sessionTitle(msgs []Msg) string {
+	for _, m := range msgs {
+		if m.Role == "user" && !strings.HasPrefix(m.Content, "[Contexto del entorno") {
+			return truncate(strings.ReplaceAll(m.Content, "\n", " "), 60)
+		}
+	}
+	return "sesión"
+}
+
+func (app *webApp) handleSessions(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		app.mu.Lock()
+		defer app.mu.Unlock()
+		st := loadStore()
+		list := make([]map[string]any, 0, len(app.sessions)+len(st))
+		seen := map[string]bool{}
+		for sid, msgs := range app.sessions {
+			if len(msgs) == 0 {
+				continue
+			}
+			seen[sid] = true
+			cwd := ""
+			if ws := app.workspaces[sid]; ws != nil {
+				cwd = ws.Cwd()
+			}
+			list = append(list, map[string]any{"id": sid, "updated": st[sid].Updated, "title": sessionTitle(msgs), "cwd": cwd})
+		}
+		for sid, d := range st {
+			if len(d.Messages) == 0 || seen[sid] {
+				continue
+			}
+			list = append(list, map[string]any{"id": sid, "updated": d.Updated, "title": sessionTitle(d.Messages), "cwd": d.Cwd})
+		}
+		sort.Slice(list, func(i, j int) bool {
+			return list[i]["updated"].(time.Time).After(list[j]["updated"].(time.Time))
+		})
+		json.NewEncoder(w).Encode(list)
+	case http.MethodPost:
+		id, err := newID()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		app.mu.Lock()
+		app.sessions[id] = []Msg{}
+		app.workspaces[id] = newWorkspace()
+		app.mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]any{"id": id, "messages": []Msg{}})
+	default:
+		http.Error(w, "método no permitido", http.StatusMethodNotAllowed)
+	}
+}
+
+func (app *webApp) handleSession(w http.ResponseWriter, r *http.Request) {
+	sid := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
+	if sid == "" {
+		http.NotFound(w, r)
+		return
+	}
+	app.mu.Lock()
+	msgs, exists := app.sessions[sid]
+	var cwd string
+	if ws := app.workspaces[sid]; ws != nil {
+		cwd = ws.Cwd()
+	}
+	app.mu.Unlock()
+	switch r.Method {
+	case http.MethodGet:
+		if !exists {
+			http.NotFound(w, r)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{"id": sid, "cwd": cwd, "messages": msgs, "updated": loadStore()[sid].Updated})
+	case http.MethodDelete:
+		app.mu.Lock()
+		delete(app.sessions, sid)
+		delete(app.workspaces, sid)
+		app.mu.Unlock()
+		if app.cfg.Persist {
+			st := loadStore()
+			delete(st, sid)
+			if err := st.Save(); err != nil {
+				log.Printf("borrar sesión: %v", err)
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "{}")
+	default:
+		http.Error(w, "método no permitido", http.StatusMethodNotAllowed)
+	}
+}
+
 func (app *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 	var p webPayload
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20)).Decode(&p); err != nil {
@@ -191,7 +287,7 @@ func (app *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 		history = app.sessions[p.Session]
 		app.mu.Unlock()
 	}
-	used := p.Session != "" && history != nil
+	used := p.Session != "" && len(history) > 0
 	if !used {
 		history = p.Messages
 	}

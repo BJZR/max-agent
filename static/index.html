@@ -44,7 +44,6 @@ main{flex:1;overflow-y:auto;scroll-behavior:smooth}
 .typing i:nth-child(2){animation-delay:.16s}
 .typing i:nth-child(3){animation-delay:.32s}
 @keyframes td{0%,100%{opacity:.25}50%{opacity:1}}
-#pending{flex:0 0 auto;width:100%;max-width:min(920px,100%);margin:0 auto;padding:0 clamp(12px,3vw,24px) 6px}
 .tool{display:flex;align-items:center;gap:9px;background:var(--panel2);border:1px solid var(--line2);border-radius:11px;padding:8px 10px;margin:6px 0 9px;font-size:13px;flex-wrap:wrap}
 .tool .tag{flex:none;font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px;letter-spacing:.2px}
 .tag.rw{background:#3b2b0a;color:var(--amber);border:1px solid #5a4416}
@@ -70,6 +69,13 @@ textarea::placeholder{color:var(--dim)}
 #send:hover:not(:disabled){filter:brightness(1.1)}
 #send:disabled{opacity:.45;cursor:default}
 .hint{max-width:min(920px,100%);margin:6px auto 0;font-size:11px;color:var(--dim)}
+.tnote{margin:2px 0 12px 37px;font:11px/1.5 var(--mono);color:var(--dim);white-space:pre-wrap;word-break:break-word}
+.stop{color:var(--amber);font-size:12px;font-weight:600}
+select{background:var(--panel);border:1px solid var(--line2);color:var(--fg);border-radius:9px;padding:4px 8px;font:12px var(--sans);max-width:30vw;outline:none}
+select:focus{border-color:var(--acc)}
+.iconbtn{background:var(--panel);border:1px solid var(--line2);color:var(--fg);border-radius:9px;width:27px;height:27px;cursor:pointer;font:700 16px var(--sans);line-height:1;flex:none;padding:0}
+.iconbtn:hover{filter:brightness(1.25)}
+.iconbtn.danger{color:var(--red)}
 .logo-fallback{display:none}
 @media (max-width:560px){
   #model,.meta .chip{margin:0}
@@ -79,6 +85,7 @@ textarea::placeholder{color:var(--dim)}
   .bubble{max-width:100%;font-size:15px}
   .tool .acts{width:100%;margin-left:0}
   .tool button{flex:1}
+  select{max-width:24vw}
   .hint{display:none}
   .brand b{font-size:14px}
 }
@@ -94,26 +101,29 @@ textarea::placeholder{color:var(--dim)}
   <div class="brand"><span class="logo">M</span><b>MAX</b></div>
   <div class="meta">
     <span id="status" class="dot"></span>
+    <select id="sessions" aria-label="sesión"></select>
+    <button id="newsess" class="iconbtn" title="nueva sesión">+</button>
+    <button id="delsess" class="iconbtn danger" title="borrar sesión actual">×</button>
     <span class="chip" id="model">conectando…</span>
     <span class="chip" id="cwd" hidden></span>
   </div>
 </header>
 <main id="scroller"><div class="inner" id="log"></div></main>
-<div id="pending"></div>
 <footer>
   <div class="bar inner" style="max-width:min(920px,100%);padding:0">
     <textarea id="input" rows="1" placeholder="Preguntá o mandá una tarea…" autocomplete="off"></textarea>
     <button id="send" disabled>Enviar</button>
   </div>
-  <p class="hint">Enter envía · Shift+Enter salto de línea</p>
+  <p class="hint">Enter envía · Shift+Enter salto de línea · ESC ×3 detiene la generación</p>
 </footer>
 <script>
 const scroller=document.getElementById('scroller'),log=document.getElementById('log'),
-      pend=document.getElementById('pending'),inp=document.getElementById('input'),
-      sendbtn=document.getElementById('send'),modelEl=document.getElementById('model'),
-      cwdEl=document.getElementById('cwd'),statusEl=document.getElementById('status');
-let session=null,busy=false,ty=null;
-const history=[];
+      inp=document.getElementById('input'),sendbtn=document.getElementById('send'),
+      modelEl=document.getElementById('model'),cwdEl=document.getElementById('cwd'),
+      statusEl=document.getElementById('status'),sessionsEl=document.getElementById('sessions'),
+      newsBtn=document.getElementById('newsess'),delBtn=document.getElementById('delsess');
+let session=null,busy=false,ty=null,controller=null,lastToolRow=null;
+const history=[],envPrefix='[Contexto del entorno';
 
 function mk(tag,cls,text){
   const n=document.createElement(tag);
@@ -154,8 +164,8 @@ function streamEnd(b){
   if(ty){ty.remove();ty=null;}
 }
 
-function toolCard(id,name,args){
-  const row=document.createElement('div');row.className='tool';
+function toolCard(parent,id,name,args){
+  const row=mk('div','tool');
   row.appendChild(mk('span','tag '+(id?'rw':'ro'),name));
   row.appendChild(mk('code','',truncate(args,500)));
   if(id){
@@ -167,23 +177,30 @@ function toolCard(id,name,args){
     acts.append(no,ok);
     row.appendChild(acts);
   }else{
-    const st=mk('span','st running','ejecutando…');
-    row.appendChild(st);
+    row.appendChild(mk('span','st running','ejecutando…'));
   }
-  pend.appendChild(row);
+  parent.appendChild(row);
+  lastToolRow=row;
   scroll();
-  return row;
 }
-function toolOut(row,text){
+function toolOut(text){
+  const row=lastToolRow;
+  if(!row)return;
+  const st=row.querySelector('.st');
+  if(st){st.classList.remove('running');st.textContent='listo';}
   const d=document.createElement('details');d.className='out';
   d.appendChild(mk('summary','','salida de la herramienta'));
   d.appendChild(mk('pre','',truncate(text,3000)));
-  (row||pend).appendChild(d);
+  row.appendChild(d);
   scroll();
 }
 async function decide(id,action,row){
   try{await fetch('/api/pending/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});}catch(e){}
-  row.replaceChildren(mk('span','tag ro','tool'),mk('span','st',action==='accept'?'ejecutando…':'rechazada'));
+  const acts=row.querySelector('.acts');if(acts)acts.remove();
+  let st=row.querySelector('.st');
+  if(!st){st=mk('span','st');row.appendChild(st);}
+  st.textContent=action==='accept'?'ejecutando…':'rechazada';
+  st.classList.toggle('running',action==='accept');
 }
 
 function autogrow(){
@@ -200,11 +217,12 @@ async function send(){
   history.push({role:'user',content:text});
 
   const out=streamStart();
-  let answer='',lastToolRow=null,curReason=null;
+  let answer='';lastToolRow=null;
+  controller=new AbortController();
   try{
     const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({session,messages:history,text})});
-    if(!res.ok){streamEnd(out);out.textContent='error HTTP '+res.status;finish(busy);return;}
+      body:JSON.stringify({session,messages:history,text}),signal:controller.signal});
+    if(!res.ok){streamEnd(out);out.appendChild(mk('div','err','error HTTP '+res.status));finish();return;}
     const reader=res.body.getReader(),dec=new TextDecoder();let buf='';
     while(true){
       const {done,value}=await reader.read();if(done)break;
@@ -217,12 +235,9 @@ async function send(){
           let ev;try{ev=JSON.parse(line.slice(6));}catch(e){continue;}
           switch(ev.type){
             case 'token':streamToken(out,ev.text||'');answer+=ev.text||'';break;
-            case 'reason':
-              if(!curReason)curReason=bubble('assistant','reason');
-              curReason.textContent+=ev.text||'';scroll();break;
-            case 'tool':lastToolRow=toolCard(ev.id||null,ev.name||'tool',ev.args||'');break;
-            case 'toolout':toolOut(lastToolRow,ev.text||'');break;
-            case 'error':streamEnd(out);bubble('assistant','err').textContent='error: '+(ev.text||'');break;
+            case 'tool':toolCard(out,ev.id||null,ev.name||'tool',ev.args||'');break;
+            case 'toolout':toolOut(ev.text||'');break;
+            case 'error':streamEnd(out);out.appendChild(mk('div','err','error: '+(ev.text||'')));break;
             case 'done':
               session=session||ev.id;
               history.push({role:'assistant',content:answer});
@@ -232,11 +247,76 @@ async function send(){
       }
     }
   }catch(e){
-    streamEnd(out);
-    bubble('assistant','err').textContent='error de red: '+e.message;
+    if(e.name==='AbortError'){
+      if(ty)streamEnd(out);
+      if(answer)history.push({role:'assistant',content:answer});
+      out.appendChild(mk('span','stop',' ⏹ generación detenida'));
+    }else{
+      streamEnd(out);
+      bubble('assistant','err').textContent='error de red: '+e.message;
+    }
   }
-  busy=false;sendbtn.disabled=false;autogrow();inp.focus();
+  finish();
 }
+function finish(){
+  busy=false;controller=null;sendbtn.disabled=false;
+  if(session)refreshList(session);
+  autogrow();inp.focus();
+}
+
+function renderMsg(m){
+  if(m.role==='user'&&m.content.startsWith(envPrefix))return;
+  if(m.role==='tool'){
+    log.appendChild(mk('div','tnote','● '+(m.name||'tool')+(m.content?' — '+truncate(m.content.replace(/\s+/g,' '),240):'')));
+    scroll();return;
+  }
+  appendMsg(m.content||'',m.role==='user'?'user':'assistant');
+}
+async function loadMessages(sid){
+  log.replaceChildren();session=sid;
+  try{
+    const r=await fetch('/api/sessions/'+sid);
+    if(!r.ok)return;
+    const d=await r.json();
+    history.length=0;
+    for(const m of d.messages||[])history.push(m);
+    for(const m of d.messages||[])renderMsg(m);
+    if(d.cwd){cwdEl.textContent=d.cwd;cwdEl.hidden=false;}
+  }catch(e){}
+}
+async function refreshList(keep){
+  let sels=[];
+  try{const r=await fetch('/api/sessions');if(r.ok)sels=await r.json();}catch(e){sels=[];}
+  sessionsEl.replaceChildren();
+  for(const s of sels){
+    const o=document.createElement('option');
+    o.value=s.id;
+    o.textContent=(s.title||'sesión')+' · '+new Date(s.updated||Date.now()).toLocaleString('es',{dateStyle:'short',timeStyle:'short'});
+    sessionsEl.appendChild(o);
+  }
+  if(sessionsEl.options.length&&keep)sessionsEl.value=keep;
+}
+async function newSession(){
+  if(busy)return;
+  let id;
+  try{const r=await fetch('/api/sessions',{method:'POST'});if(!r.ok)return;const d=await r.json();id=d.id;}catch(e){return;}
+  log.replaceChildren();history.length=0;session=id;cwdEl.hidden=true;
+  await refreshList(id);
+}
+
+function autogrow(){
+  inp.style.height='auto';
+  inp.style.height=Math.min(inp.scrollHeight,180)+'px';
+  sendbtn.disabled=busy||!inp.value.trim().length;
+}
+
+let escStrikes=0,escTimer=null;
+document.addEventListener('keydown',e=>{
+  if(e.key!=='Escape')return;
+  escStrikes++;clearTimeout(escTimer);
+  escTimer=setTimeout(()=>escStrikes=0,900);
+  if(escStrikes>=3){escStrikes=0;if(busy&&controller)controller.abort();}
+});
 
 async function boot(){
   try{
@@ -253,6 +333,10 @@ async function boot(){
     statusEl.title='sin conexión';
     modelEl.textContent='sin conexión';
   }
+  await refreshList();
+  if(sessionsEl.options.length){loadMessages(sessionsEl.value);}
+  else await newSession();
+  inp.focus();
 }
 
 function submit(ev){
@@ -261,9 +345,17 @@ function submit(ev){
 inp.addEventListener('keydown',submit);
 inp.addEventListener('input',autogrow);
 sendbtn.addEventListener('click',send);
+sessionsEl.addEventListener('change',()=>{if(busy)return;loadMessages(sessionsEl.value);});
+newsBtn.addEventListener('click',newSession);
+delBtn.addEventListener('click',async()=>{
+  if(busy||!session)return;
+  try{await fetch('/api/sessions/'+session,{method:'DELETE'});}catch(e){}
+  await refreshList();
+  if(sessionsEl.options.length)loadMessages(sessionsEl.value);
+  else await newSession();
+});
 autogrow();
 boot();
-inp.focus();
 </script>
 </body>
 </html>
