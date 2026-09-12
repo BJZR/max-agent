@@ -99,7 +99,7 @@ func runWeb(cfg Config, prov *Provider, system string) {
 		sessions:   map[string][]Msg{},
 		workspaces: map[string]*Workspace{},
 		running:    map[string]bool{},
-		authToken:   cfg.AuthToken,
+		authToken:  cfg.AuthToken,
 	}
 	if cfg.Memory {
 		app.memory = loadMemory()
@@ -151,7 +151,7 @@ func runWeb(cfg Config, prov *Provider, system string) {
 
 func (app *webApp) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-MAX-Token") != app.authToken {
+		if strings.HasPrefix(r.URL.Path, "/api/") && r.Header.Get("X-MAX-Token") != app.authToken {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			w.Write([]byte(`{"error":"token inválido"}`))

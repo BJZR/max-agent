@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 type toolSpec struct {
@@ -219,7 +221,14 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + fmt.Sprintf("\n… (%d chars omitidos)", len(s)-n)
+	cut := s[:n]
+	for i := len(cut) - 1; i >= 0 && i >= n-3; i-- {
+		if utf8.RuneStart(cut[i]) {
+			cut = cut[:i]
+			break
+		}
+	}
+	return cut + fmt.Sprintf("\n… (%d chars omitidos)", len(s)-len(cut))
 }
 
 const (
@@ -509,6 +518,12 @@ func searchFiles(ctx context.Context, ws *Workspace, a toolArgs) (string, error)
 	if err != nil && err != context.Canceled {
 		return strings.Join(lines, "\n"), err
 	}
+	if err == context.Canceled {
+		if lines == nil {
+			return "", nil
+		}
+		lines = append(lines, fmt.Sprintf("\n… (%d resultados, hay más)", count))
+	}
 	return strings.Join(lines, "\n"), nil
 }
 
@@ -620,9 +635,43 @@ func appendFile(ctx context.Context, ws *Workspace, a toolArgs) (string, error) 
 	return fmt.Sprintf("agregado a %s (%d bytes)", a.Path, n), nil
 }
 
+func blockedHost(u *url.URL) bool {
+	if os.Getenv("MAX_ALLOW_PRIVATE") != "" {
+		return false
+	}
+	host := u.Hostname()
+	if host == "" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return isBlockedIP(ip)
+	}
+	addrs, err := net.LookupIP(host)
+	if err != nil {
+		return false
+	}
+	for _, ip := range addrs {
+		if isBlockedIP(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func isBlockedIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
+}
+
 func httpGet(ctx context.Context, a toolArgs) (string, error) {
 	if a.URL == "" {
 		return "", fmt.Errorf("falta la url")
+	}
+	u, err := url.Parse(a.URL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", fmt.Errorf("url inválida")
+	}
+	if blockedHost(u) {
+		return "", fmt.Errorf("acceso bloqueado (host local/privado): %s", u.Host)
 	}
 	d := 15 * time.Second
 	if a.Timeout != "" {

@@ -629,6 +629,7 @@ func TestParseMaxLine(t *testing.T) {
 }
 
 func TestMaxFenceRouting(t *testing.T) {
+	t.Setenv("MAX_ALLOW_PRIVATE", "1")
 	body := "el cuerpo pagado ok"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, body)
@@ -719,6 +720,7 @@ func TestAppendFile(t *testing.T) {
 }
 
 func TestHttpGet(t *testing.T) {
+	t.Setenv("MAX_ALLOW_PRIVATE", "1")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
 		fmt.Fprint(w, "ok-body")

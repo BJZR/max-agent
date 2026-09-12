@@ -73,5 +73,12 @@ func cdIfNeeded(cmd string) (string, bool) {
 		return h, true
 	}
 	rest = strings.Trim(rest, "'\"")
+	if strings.HasPrefix(rest, "~/") || rest == "~" {
+		h, err := os.UserHomeDir()
+		if err != nil {
+			return "", false
+		}
+		rest = h + strings.TrimPrefix(rest, "~")
+	}
 	return rest, true
 }

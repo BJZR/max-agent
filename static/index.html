@@ -121,6 +121,18 @@ select:focus{border-color:var(--acc)}
   <p class="hint">Enter envía · Shift+Enter salto de línea · ESC ×3 detiene la generación</p>
 </footer>
 <script>
+let maxToken=localStorage.getItem('max-token')||'';
+async function api(url,opts={}){
+  opts.headers=Object.assign({'Content-Type':'application/json'},opts.headers||{});
+  if(maxToken)opts.headers['X-MAX-Token']=maxToken;
+  const r=await fetch(url,opts);
+  if(r.status===401){
+    const t=prompt('Ingresá el token de MAX:');
+    if(t){localStorage.setItem('max-token',t);maxToken=t;return api(url,opts);}
+    log.append(mk('div','err','autenticación requerida'));
+  }
+  return r;
+}
 const scroller=document.getElementById('scroller'),log=document.getElementById('log'),
       inp=document.getElementById('input'),sendbtn=document.getElementById('send'),
       modelEl=document.getElementById('model'),
@@ -200,7 +212,7 @@ function toolOut(text){
   scroll();
 }
 async function decide(id,action,row){
-  try{await fetch('/api/pending/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});}catch(e){}
+  try{await api('/api/pending/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});}catch(e){}
   const acts=row.querySelector('.acts');if(acts)acts.remove();
   let st=row.querySelector('.st');
   if(!st){st=mk('span','st');row.appendChild(st);}
@@ -227,7 +239,7 @@ async function send(){
   let answer='';lastToolRow=null;
   controller=new AbortController();
   try{
-    const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
+    const res=await api('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({session,messages:history,text}),signal:controller.signal});
     if(!res.ok){streamEnd(out);out.appendChild(mk('div','err','error HTTP '+res.status));finish();return;}
     const reader=res.body.getReader(),dec=new TextDecoder();let buf='';
@@ -284,7 +296,7 @@ function renderMsg(m){
 async function loadMessages(sid){
   log.replaceChildren();session=sid;
   try{
-    const r=await fetch('/api/sessions/'+sid);
+    const r=await api('/api/sessions/'+sid);
     if(!r.ok)return;
     const d=await r.json();
     history.length=0;
@@ -295,7 +307,7 @@ async function loadMessages(sid){
 }
 async function refreshList(keep){
   let sels=[];
-  try{const r=await fetch('/api/sessions');if(r.ok)sels=await r.json();}catch(e){sels=[];}
+  try{const r=await api('/api/sessions');if(r.ok)sels=await r.json();}catch(e){sels=[];}
   sessionsEl.replaceChildren();
   for(const s of sels){
     const o=document.createElement('option');
@@ -308,16 +320,9 @@ async function refreshList(keep){
 async function newSession(){
   if(busy)return;
   let id;
-  try{const r=await fetch('/api/sessions',{method:'POST'});if(!r.ok)return;const d=await r.json();id=d.id;}catch(e){return;}
+  try{const r=await api('/api/sessions',{method:'POST'});if(!r.ok)return;const d=await r.json();id=d.id;}catch(e){return;}
   log.replaceChildren();history.length=0;session=id;cwdEl.hidden=true;
   await refreshList(id);
-}
-
-function autogrow(){
-  if(busy){sendbtn.disabled=false;return;}
-  inp.style.height='auto';
-  inp.style.height=Math.min(inp.scrollHeight,180)+'px';
-  sendbtn.disabled=!inp.value.trim().length;
 }
 
 let escStrikes=0,escTimer=null;
@@ -331,8 +336,8 @@ document.addEventListener('keydown',e=>{
 async function boot(){
   try{
     const [m,i]=await Promise.all([
-      fetch('/api/model').then(r=>r.json()),
-      fetch('/api/info').then(r=>r.json())
+      api('/api/model').then(r=>r.json()),
+      api('/api/info').then(r=>r.json())
     ]);
     modelEl.textContent=m.model||'?';
     if(i.cwd){cwdEl.textContent=i.cwd;cwdEl.hidden=false;}
@@ -360,7 +365,7 @@ sessionsEl.addEventListener('change',()=>{if(busy)return;loadMessages(sessionsEl
 newsBtn.addEventListener('click',newSession);
 delBtn.addEventListener('click',async()=>{
   if(busy||!session)return;
-  try{await fetch('/api/sessions/'+session,{method:'DELETE'});}catch(e){}
+  try{await api('/api/sessions/'+session,{method:'DELETE'});}catch(e){}
   await refreshList();
   if(sessionsEl.options.length)loadMessages(sessionsEl.value);
   else await newSession();
