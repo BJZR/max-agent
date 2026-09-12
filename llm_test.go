@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -672,6 +673,76 @@ func TestMemIntent(t *testing.T) {
 		if memIntent(in) {
 			t.Fatalf("no esperaba memIntent en %q", in)
 		}
+	}
+}
+
+func TestWebSearch(t *testing.T) {
+	html := `<html><body>
+<a rel="nofollow" class="result__a" href="https://example.com/duck/1">Título &amp; Uno</a>
+<a class="result__snippet" href="https://example.com/s/1">Resumen del primer resultado</a>
+<a rel="nofollow" class="result__a" href="https://example.com/duck/2">Segundo resultado</a>
+<a class="result__snippet" href="https://example.com/s/2">Otro resumen aquí</a>
+</body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		io.WriteString(w, html)
+	}))
+	defer srv.Close()
+	orig := ddgEndpoint
+	ddgEndpoint = srv.URL + "/?q="
+	defer func() { ddgEndpoint = orig }()
+	out, err := webSearch(context.Background(), toolArgs{Query: "max test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Título & Uno", "Segundo resultado", "example.com", "1. ", "Resumen del primer resultado"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("out = %q, falta %q", out, want)
+		}
+	}
+}
+
+func TestGitTools(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/a.txt", []byte("hola\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) error {
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = runtimeEnv()
+		return c.Run()
+	}
+	if err := run("init", "-q", "-b", "main"); err != nil {
+		t.Skipf("git no disponible: %v", err)
+	}
+	run("config", "user.email", "t@t.io")
+	run("config", "user.name", "test")
+	run("add", "a.txt")
+	if err := run("commit", "-q", "-m", "Oneline inicial"); err != nil {
+		t.Fatal(err)
+	}
+	ws := newWorkspace()
+	ws.SetCwd(dir)
+	out, err := gitStatus(context.Background(), ws, toolArgs{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "main") {
+		t.Fatalf("status = %q", out)
+	}
+	out, err = gitLog(context.Background(), ws, toolArgs{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Oneline inicial") {
+		t.Fatalf("log = %q", out)
+	}
+	out, err = gitBranch(context.Background(), ws, toolArgs{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "main" {
+		t.Fatalf("branch = %q", out)
 	}
 }
 

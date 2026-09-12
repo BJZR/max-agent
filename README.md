@@ -56,6 +56,11 @@ También se puede editar `prompts/default.md` para cambiar la personalidad del a
 | search_files     | grep en el proyecto                 | no        |
 | tree             | árbol de directorios (con profundidad) | no     |
 | http_get         | descarga el contenido de una URL    | no        |
+| web_search       | busca en internet (DuckDuckGo, sin API key) | no  |
+| git_status       | estado del repo (porcelain)         | no        |
+| git_branch       | rama actual                         | no        |
+| git_log          | últimos commits (--oneline)         | no        |
+| git_diff         | cambios sin commitear               | no        |
 
 Las herramientas peligrosas piden confirmación (`y/N`). Con `-yes` o `auto_approve: true` se ejecutan solas. Si el stdin no es un terminal (pipe), se auto-aprueban: `echo "haz un test" | ./max -yes`.
 
@@ -67,6 +72,9 @@ Cada sesión mantiene su propio directorio de trabajo. Un comando `cd DIR` suelt
 
 ### Persistencia de sesiones
 MAX guarda el historial y el cwd de cada sesión en `~/.max/sessions.json` (desactivable con `persist: false` en la config o `-no-persist`). Al reiniciar, web restaura todas las sesiones y TUI la última conversación con su directorio de trabajo.
+
+### Memoria persistente
+MAX recuerda hechos durables entre sesiones en `~/.max/memory.md`. Decile "guardá esto en memoria" o "recordá que...": el agente archiva el hecho y lo confirma. El bloque `[MEMORIA]` se inyecta al inicio de cada sesión nueva. Ver/borrar en TUI con `/memory` y `/memory clear` (desactivar con `-no-memory` o `memory: false`).
 
 ### Memoria persistente (entre sesiones)
 Las sesiones guardan el historial de cada conversación; la **memoria** guarda hechos que cruzan sesiones en `~/.max/memory.md`. Tras cada tarea un "archivista" le pide al modelo extraer hechos durables y esos `- apuntes` se inyectan al inicio de **cualquier** sesión nueva (bloque `[MEMORIA]`). Se desactiva con `memory: false` en la config o `-no-memory`. En TUI: `/memory` para verla y `/memory clear` para borrarla.

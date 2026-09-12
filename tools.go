@@ -8,9 +8,11 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -121,6 +123,38 @@ func init() {
 				"url":     strParam("URL completa, ej: https://example.com/api"),
 				"timeout": strParam("duración máxima, ej: 10s (opcional)"),
 			}),
+		funcSpec("web_search",
+			"Busca en internet y devuelve los mejores resultados (título, resumen y URL). Usalo para información actual que no sabés; después leé la página con http_get.",
+			[]string{"query"},
+			map[string]any{
+				"query": strParam("consulta de búsqueda"),
+				"max":   strParam("cantidad de resultados (1-10, por defecto 5)"),
+			}),
+		funcSpec("git_status",
+			"Estado del repositorio git actual (rama y archivos modificados). Read-only.",
+			[]string{},
+			map[string]any{
+				"path": strParam("directorio del repo (por defecto el actual)"),
+			}),
+		funcSpec("git_branch",
+			"Rama actual del repositorio git. Read-only.",
+			[]string{},
+			map[string]any{
+				"path": strParam("directorio del repo (por defecto el actual)"),
+			}),
+		funcSpec("git_log",
+			"Últimos commits del repositorio git (uno por línea). Read-only.",
+			[]string{},
+			map[string]any{
+				"path": strParam("directorio del repo (por defecto el actual)"),
+				"n":    strParam("cantidad de commits (por defecto 10)"),
+			}),
+		funcSpec("git_diff",
+			"Diferencias sin commitear del repositorio git. Read-only.",
+			[]string{},
+			map[string]any{
+				"path": strParam("directorio del repo (por defecto el actual)"),
+			}),
 	}
 }
 
@@ -137,6 +171,10 @@ type toolArgs struct {
 	New     string `json:"new"`
 	Depth   string `json:"depth"`
 	URL     string `json:"url"`
+	Query   string `json:"query"`
+	Max     string `json:"max"`
+	N       string `json:"n"`
+	Result  int    `json:"result"`
 }
 
 func execTool(ctx context.Context, ws *Workspace, shell, name string, raw json.RawMessage) (string, error) {
@@ -163,6 +201,16 @@ func execTool(ctx context.Context, ws *Workspace, shell, name string, raw json.R
 		return appendFile(ctx, ws, a)
 	case "http_get":
 		return httpGet(ctx, a)
+	case "web_search":
+		return webSearch(ctx, a)
+	case "git_status":
+		return gitStatus(ctx, ws, a)
+	case "git_branch":
+		return gitBranch(ctx, ws, a)
+	case "git_log":
+		return gitLog(ctx, ws, a)
+	case "git_diff":
+		return gitDiff(ctx, ws, a)
 	}
 	return "", fmt.Errorf("herramienta desconocida: %s", name)
 }
@@ -599,4 +647,159 @@ func httpGet(ctx context.Context, a toolArgs) (string, error) {
 		return s, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	return s, nil
+}
+
+var ddgEndpoint = "https://html.duckduckgo.com/html/?q="
+
+func webSearch(ctx context.Context, a toolArgs) (string, error) {
+	q := strings.TrimSpace(a.Query)
+	if q == "" {
+		return "", fmt.Errorf("falta la consulta")
+	}
+	n := 5
+	if a.Max != "" {
+		if v, err := strconv.Atoi(a.Max); err == nil && v > 0 {
+			if v > 10 {
+				v = 10
+			}
+			n = v
+		}
+	}
+	d := 20 * time.Second
+	u := ddgEndpoint + url.QueryEscape(q)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+	client := &http.Client{Timeout: d}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 300000))
+	if err != nil {
+		return "", err
+	}
+	var out strings.Builder
+	found := 0
+	rest := string(body)
+	for found < n {
+		i := strings.Index(rest, `class="result__a"`)
+		if i < 0 {
+			break
+		}
+		seg := rest[i:]
+		h := strings.Index(seg, `href="`)
+		if h < 0 {
+			break
+		}
+		h += len(`href="`)
+		he := strings.Index(seg[h:], `"`)
+		if he < 0 {
+			break
+		}
+		link := seg[h : h+he]
+		if iu := strings.Index(link, "uddg="); iu >= 0 {
+			v := link[iu+len("uddg="):]
+			if j := strings.IndexAny(v, "&"); j >= 0 {
+				v = v[:j]
+			}
+			if un, err := url.QueryUnescape(v); err == nil {
+				link = un
+			}
+		}
+		ts := h + he + 1
+		if strings.Index(seg[ts:], `>`) < 0 {
+			break
+		}
+		ts += strings.Index(seg[ts:], `>`) + 1
+		te := strings.Index(seg[ts:], `</a>`)
+		if te < 0 {
+			break
+		}
+		title := cleanHTML(seg[ts : ts+te])
+		snippet := ""
+		srest := seg[ts+te:]
+		si := strings.Index(srest, `class="result__snippet"`)
+		if si >= 0 {
+			sr := srest[si:]
+			sb := strings.Index(sr, `>`)
+			se := strings.Index(sr, `</a>`)
+			if sb >= 0 && se > sb {
+				snippet = cleanHTML(sr[sb+1 : se])
+			}
+		}
+		if title != "" || link != "" {
+			found++
+			fmt.Fprintf(&out, "%d. %s\n%s%s\n", found, title, snippet, link)
+			if snippet != "" {
+				fmt.Fprintf(&out, "   %s\n", snippet)
+			}
+		}
+		rest = seg[ts+te+len("</a>"):]
+	}
+	if found == 0 {
+		return "", fmt.Errorf("sin resultados para %q", q)
+	}
+	return out.String(), nil
+}
+
+func cleanHTML(s string) string {
+	r := strings.NewReplacer(
+		"&amp;", "&", "&quot;", `"`, "&#39;", "'", "&lt;", "<", "&gt;", ">", "&nbsp;", " ",
+	)
+	return strings.TrimSpace(r.Replace(s))
+}
+
+func gitDir(ws *Workspace, a toolArgs) string {
+	if a.Path == "" {
+		return ws.Cwd()
+	}
+	return ws.Resolve(a.Path)
+}
+
+func gitExec(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	cmd.Env = runtimeEnv()
+	out, err := cmd.CombinedOutput()
+	s := truncate(string(out), 20000)
+	if err != nil {
+		return s, fmt.Errorf("git %v: %v", args, err)
+	}
+	return s, nil
+}
+
+func gitStatus(ctx context.Context, ws *Workspace, a toolArgs) (string, error) {
+	return gitExec(ctx, gitDir(ws, a), "status", "--short", "--branch")
+}
+
+func gitBranch(ctx context.Context, ws *Workspace, a toolArgs) (string, error) {
+	s, err := gitExec(ctx, gitDir(ws, a), "branch", "--show-current")
+	if err != nil {
+		return "", err
+	}
+	if s == "" {
+		return "(sin rama)", nil
+	}
+	return s, nil
+}
+
+func gitLog(ctx context.Context, ws *Workspace, a toolArgs) (string, error) {
+	n := 10
+	if a.N != "" {
+		if v, err := strconv.Atoi(a.N); err == nil && v > 0 {
+			if v > 50 {
+				v = 50
+			}
+			n = v
+		}
+	}
+	return gitExec(ctx, gitDir(ws, a), "log", "--oneline", "-n", strconv.Itoa(n))
+}
+
+func gitDiff(ctx context.Context, ws *Workspace, a toolArgs) (string, error) {
+	return gitExec(ctx, gitDir(ws, a), "diff")
 }
