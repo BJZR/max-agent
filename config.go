@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/user"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -18,6 +20,7 @@ type Config struct {
 	Context      bool    `yaml:"context"`
 	AutoApprove  bool    `yaml:"auto_approve"`
 	Persist      bool    `yaml:"persist"`
+	Shell        string  `yaml:"shell"`
 	ServerAddr   string  `yaml:"server_addr"`
 }
 
@@ -71,5 +74,40 @@ func normalize(cfg Config) Config {
 	if cfg.ServerAddr == "" {
 		cfg.ServerAddr = base.ServerAddr
 	}
+	if cfg.Shell == "" {
+		cfg.Shell = resolveShell()
+	}
 	return cfg
+}
+
+// resolveShell devuelve la shell por defecto del usuario: $SHELL si está
+// definida, si no la shell del /etc/passwd del usuario actual, si no /bin/sh.
+func resolveShell() string {
+	if s := os.Getenv("SHELL"); s != "" {
+		return s
+	}
+	name := os.Getenv("USER")
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		name = u.Username
+	}
+	if name != "" {
+		if sh, ok := shellFromPasswd(name); ok {
+			return sh
+		}
+	}
+	return "/bin/sh"
+}
+
+func shellFromPasswd(name string) (string, bool) {
+	data, err := os.ReadFile("/etc/passwd")
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		f := strings.Split(line, ":")
+		if len(f) >= 7 && f[0] == name && f[6] != "" {
+			return f[6], true
+		}
+	}
+	return "", false
 }

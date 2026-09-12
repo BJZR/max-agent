@@ -12,5 +12,6 @@ tools: true                        # herramientas (ejecutar, leer/escribir, busc
 auto_approve: false                # true = ejecuta sin preguntar
 context: true                      # inyecta el contexto del entorno al arrancar
 persist: true                      # guarda sesiones en ~/.max/sessions.json
+shell: ""                          # shell para run_command (vacío = la del usuario)
 
 server_addr: ":8090"               # solo para el modo web

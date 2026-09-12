@@ -101,7 +101,7 @@ func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, 
 						Content: "El usuario rechazó ejecutar la herramienta. Continúa sin ejecutarla."})
 					continue
 				}
-				out, err := execTool(ctx, a.ws, name, json.RawMessage(args))
+				out, err := execTool(ctx, a.ws, a.config.Shell, name, json.RawMessage(args))
 				if a.onToolOut != nil {
 					a.onToolOut(out)
 				}
@@ -139,7 +139,7 @@ func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, 
 							continue
 						}
 					}
-					out, err := execTool(ctx, a.ws, "run_command", args)
+					out, err := execTool(ctx, a.ws, a.config.Shell, "run_command", args)
 					if a.onToolOut != nil {
 						a.onToolOut(out)
 					}

@@ -23,6 +23,7 @@ func main() {
 		yes       = flag.Bool("yes", false, "auto-aprobar herramientas peligrosas")
 		noTool    = flag.Bool("no-tools", false, "desactivar herramientas")
 		noPersist = flag.Bool("no-persist", false, "no guardar sesiones en disco")
+		shell     = flag.String("shell", "", "shell para ejecutar comandos (por defecto la del usuario)")
 		help      = flag.Bool("help", false, "mostrar ayuda")
 	)
 	flag.Usage = func() {
@@ -78,6 +79,9 @@ ejemplos:
 	}
 	if *noPersist {
 		cfg.Persist = false
+	}
+	if *shell != "" {
+		cfg.Shell = *shell
 	}
 
 	system := defaultSystemPrompt

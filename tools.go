@@ -121,14 +121,14 @@ type toolArgs struct {
 	Depth   string `json:"depth"`
 }
 
-func execTool(ctx context.Context, ws *Workspace, name string, raw json.RawMessage) (string, error) {
+func execTool(ctx context.Context, ws *Workspace, shell, name string, raw json.RawMessage) (string, error) {
 	var a toolArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return "", fmt.Errorf("argumentos inválidos: %v", err)
 	}
 	switch name {
 	case "run_command":
-		return runCommand(ctx, ws, a)
+		return runCommand(ctx, ws, shell, a)
 	case "read_file":
 		return readFile(ctx, ws, a)
 	case "write_file":
@@ -220,7 +220,7 @@ func interactiveBlocked(cmd string) string {
 	return ""
 }
 
-func runCommand(ctx context.Context, ws *Workspace, a toolArgs) (string, error) {
+func runCommand(ctx context.Context, ws *Workspace, shell string, a toolArgs) (string, error) {
 	if strings.TrimSpace(a.Command) == "" {
 		return "", fmt.Errorf("falta el comando")
 	}
@@ -234,6 +234,9 @@ func runCommand(ctx context.Context, ws *Workspace, a toolArgs) (string, error) 
 		ws.SetCwd(dir)
 		return "cwd: " + ws.Cwd(), nil
 	}
+	if shell == "" {
+		shell = "/bin/sh"
+	}
 	d := defaultCmdTimeout
 	if a.Timeout != "" {
 		if p, err := time.ParseDuration(a.Timeout); err == nil && p > 0 {
@@ -245,7 +248,7 @@ func runCommand(ctx context.Context, ws *Workspace, a toolArgs) (string, error) 
 	}
 	cctx, cancel := context.WithTimeout(ctx, d)
 	defer cancel()
-	cmd := exec.CommandContext(cctx, "sh", "-c", a.Command)
+	cmd := exec.CommandContext(cctx, shell, "-c", a.Command)
 	cmd.Dir = ws.Cwd()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {

@@ -63,7 +63,8 @@ func runTUI(cfg Config, prov *Provider, system string) error {
 		},
 	}
 
-	fmt.Fprintf(out, "\033[1;32mMAX\033[0m — agente minimalista · modelo \033[36m%s\033[0m · /help\n", cfg.Model)
+	fmt.Fprintf(out, "\033[1;32mMAX\033[0m — agente minimalista · modelo \033[36m%s\033[0m · shell \033[36m%s\033[0m · cwd \033[36m%s\033[0m · /help\n",
+		cfg.Model, shellLabel(cfg.Shell), ws.Cwd())
 	history := []Msg{}
 	seed := func() []Msg {
 		if cfg.Context && cfg.Tools {
@@ -125,6 +126,15 @@ func runTUI(cfg Config, prov *Provider, system string) error {
 			}
 			fmt.Fprintln(out)
 			continue
+		case line == "/pwd":
+			fmt.Fprintln(out, ws.Cwd())
+			continue
+		case len(line) >= 4 && strings.HasPrefix(line, "/cd "):
+			dir := strings.TrimSpace(strings.TrimPrefix(line, "/cd "))
+			ws.SetCwd(ws.Resolve(strings.Trim(dir, "'\"")))
+			fmt.Fprintf(out, "\033[2mcwd: %s\033[0m\n", ws.Cwd())
+			saveSession()
+			continue
 		}
 		fmt.Fprintf(out, "\033[36m»\033[0m %s\n", truncate(line, 500))
 		content, newHist, err := agent.Chat(context.Background(), history, line)
@@ -144,10 +154,19 @@ func printHelp(out io.Writer) {
 	fmt.Fprint(out, `comandos:
   /help    esta ayuda
   /tools   lista de herramientas
+  /pwd     muestra el directorio de trabajo
+  /cd DIR  cambia el directorio de trabajo
   /clear   borra el historial
   /exit    salir
 
 tips:
   Ctrl+D para salir · todo lo demás se envía al modelo
 `)
+}
+
+func shellLabel(shell string) string {
+	if shell == "" {
+		return "sh"
+	}
+	return shell
 }

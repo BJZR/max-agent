@@ -134,7 +134,7 @@ func (a *alwaysApprove) Approve(name, args string) (bool, error) { return true, 
 
 func TestExecTool(t *testing.T) {
 	ws := newWorkspace()
-	out, err := execTool(context.Background(), ws, "run_command", json.RawMessage(`{"command":"echo max_test","timeout":"5s"}`))
+	out, err := execTool(context.Background(), ws, "sh", "run_command", json.RawMessage(`{"command":"echo max_test","timeout":"5s"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,14 +147,14 @@ func TestWriteReadFile(t *testing.T) {
 	ws := newWorkspace()
 	dir := t.TempDir()
 	path := dir + "/sub/nested.go"
-	out, err := execTool(context.Background(), ws, "write_file", json.RawMessage(fmt.Sprintf(`{"path":%q,"content":"package p\n"}`, path)))
+	out, err := execTool(context.Background(), ws, "sh", "write_file", json.RawMessage(fmt.Sprintf(`{"path":%q,"content":"package p\n"}`, path)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out, "escrito") {
 		t.Fatalf("out = %q", out)
 	}
-	out, err = execTool(context.Background(), ws, "read_file", json.RawMessage(fmt.Sprintf(`{"path":%q}`, path)))
+	out, err = execTool(context.Background(), ws, "sh", "read_file", json.RawMessage(fmt.Sprintf(`{"path":%q}`, path)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ func TestEditFile(t *testing.T) {
 	if err := writePath(path, []byte("func a() { return 1 }\nfunc f() { return a() }\n")); err != nil {
 		t.Fatal(err)
 	}
-	out, err := execTool(context.Background(), ws, "edit_file", json.RawMessage(
+	out, err := execTool(context.Background(), ws, "sh", "edit_file", json.RawMessage(
 		fmt.Sprintf(`{"path":%q,"old":"return a()","new":"return a() + 1"}`, path)))
 	if err != nil {
 		t.Fatal(err)
@@ -201,7 +201,7 @@ func TestEditFile(t *testing.T) {
 	if !strings.Contains(string(data), "return a() + 1") {
 		t.Fatalf("no se aplicó el reemplazo: %q", data)
 	}
-	out, err = execTool(context.Background(), ws, "edit_file", json.RawMessage(
+	out, err = execTool(context.Background(), ws, "sh", "edit_file", json.RawMessage(
 		fmt.Sprintf(`{"path":%q,"old":"no existe","new":"x"}`, path)))
 	if err == nil {
 		t.Fatalf("debería fallar si no encuentra old, out=%q", out)
@@ -214,7 +214,7 @@ func TestTree(t *testing.T) {
 	writePath(dir+"/a/x1.go", []byte(""))
 	writePath(dir+"/a/s1/x2.go", []byte(""))
 	writePath(dir+"/b.txt", []byte(""))
-	out, err := execTool(context.Background(), ws, "tree", json.RawMessage(fmt.Sprintf(`{"path":%q,"depth":"2"}`, dir)))
+	out, err := execTool(context.Background(), ws, "sh", "tree", json.RawMessage(fmt.Sprintf(`{"path":%q,"depth":"2"}`, dir)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +296,7 @@ func TestRunCommandRejectsInteractive(t *testing.T) {
 	ws := newWorkspace()
 	dir := t.TempDir()
 	ws.SetCwd(dir)
-	out, err := runCommand(context.Background(), ws, toolArgs{Command: "vim x.txt"})
+	out, err := runCommand(context.Background(), ws, "sh", toolArgs{Command: "vim x.txt"})
 	if err == nil || !strings.Contains(err.Error(), "cuelga la sesión") {
 		t.Fatalf("esperaba rechazo de vim, got out=%q err=%v", out, err)
 	}
@@ -305,7 +305,7 @@ func TestRunCommandRejectsInteractive(t *testing.T) {
 func TestRunCommandTimeout(t *testing.T) {
 	ws := newWorkspace()
 	start := time.Now()
-	_, err := runCommand(context.Background(), ws, toolArgs{Command: "sleep 5", Timeout: "300ms"})
+	_, err := runCommand(context.Background(), ws, "sh", toolArgs{Command: "sleep 5", Timeout: "300ms"})
 	if err == nil || !strings.Contains(err.Error(), "se agotó el tiempo") {
 		t.Fatalf("esperaba timeout, got %v", err)
 	}
@@ -316,7 +316,7 @@ func TestRunCommandTimeout(t *testing.T) {
 
 func TestRunCommandBadTimeoutFallsBack(t *testing.T) {
 	ws := newWorkspace()
-	out, err := runCommand(context.Background(), ws, toolArgs{Command: "echo ok_fallback", Timeout: "noesduracion"})
+	out, err := runCommand(context.Background(), ws, "sh", toolArgs{Command: "echo ok_fallback", Timeout: "noesduracion"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,7 +330,7 @@ func TestWorkspaceCd(t *testing.T) {
 	ws := newWorkspace()
 	ws.SetCwd(dir)
 	sub := dir + "/ia"
-	out, err := runCommand(context.Background(), ws, toolArgs{Command: "mkdir -p ia && cd ia && pwd", Timeout: "5s"})
+	out, err := runCommand(context.Background(), ws, "sh", toolArgs{Command: "mkdir -p ia && cd ia && pwd", Timeout: "5s"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +340,7 @@ func TestWorkspaceCd(t *testing.T) {
 	if ws.Cwd() != dir {
 		t.Fatalf("cwd NO debe cambiar con cd interno: %q", ws.Cwd())
 	}
-	out, err = runCommand(context.Background(), ws, toolArgs{Command: "cd ia", Timeout: "5s"})
+	out, err = runCommand(context.Background(), ws, "sh", toolArgs{Command: "cd ia", Timeout: "5s"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +350,7 @@ func TestWorkspaceCd(t *testing.T) {
 	if ws.Cwd() != sub {
 		t.Fatalf("cwd tras cd = %q, esperado %q", ws.Cwd(), sub)
 	}
-	out, err = runCommand(context.Background(), ws, toolArgs{Command: "pwd", Timeout: "5s"})
+	out, err = runCommand(context.Background(), ws, "sh", toolArgs{Command: "pwd", Timeout: "5s"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +367,7 @@ func TestCdIfNeededStrict(t *testing.T) {
 		t.Fatal(err)
 	}
 	compound := "cd c\ntouch created_in_compound\nls"
-	out, err := runCommand(context.Background(), ws, toolArgs{Command: compound, Timeout: "5s"})
+	out, err := runCommand(context.Background(), ws, "sh", toolArgs{Command: compound, Timeout: "5s"})
 	if err != nil {
 		t.Fatal(err)
 	}
