@@ -25,6 +25,8 @@ func main() {
 		noPersist = flag.Bool("no-persist", false, "no guardar sesiones en disco")
 		noMemory  = flag.Bool("no-memory", false, "desactivar memoria persistente")
 		shell     = flag.String("shell", "", "shell para ejecutar comandos (por defecto la del usuario)")
+		steps     = flag.Int("steps", 0, "máximo de pasos del agente (default: 12)")
+		ctxChars  = flag.Int("ctx-chars", 0, "presupuesto de contexto en caracteres (default: 16000)")
 		help      = flag.Bool("help", false, "mostrar ayuda")
 	)
 	flag.Usage = func() {
@@ -42,6 +44,8 @@ uso: max [flags]
   -no-tools[bool]    desactivar herramientas
   -no-persist[bool]  no guardar sesiones en disco (~/.max/sessions.json)
   -no-memory[bool]   desactivar memoria persistente (~/.max/memory.md)
+  -steps N           pasos máximos del agente (default: 12)
+  -ctx-chars N       presupuesto de contexto en caracteres (default: 16000)
   -help              esta ayuda
 
 ejemplos:
@@ -87,6 +91,12 @@ ejemplos:
 	}
 	if *shell != "" {
 		cfg.Shell = *shell
+	}
+	if *steps > 0 {
+		cfg.MaxSteps = *steps
+	}
+	if *ctxChars > 0 {
+		cfg.CtxChars = *ctxChars
 	}
 
 	system := defaultSystemPrompt

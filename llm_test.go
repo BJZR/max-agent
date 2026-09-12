@@ -615,6 +615,53 @@ func TestFencedCommands(t *testing.T) {
 	}
 }
 
+func TestAppendFile(t *testing.T) {
+	ws := newWorkspace()
+	dir := t.TempDir()
+	p := dir + "/log.txt"
+	out, err := execTool(context.Background(), ws, "sh", "append_file", json.RawMessage(fmt.Sprintf(`{"path":%q,"content":"linea 1\n"}`, p)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "agregado a") {
+		t.Fatalf("out = %q", out)
+	}
+	out, err = execTool(context.Background(), ws, "sh", "append_file", json.RawMessage(fmt.Sprintf(`{"path":%q,"content":"linea 2\n"}`, p)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "linea 1\nlinea 2\n" {
+		t.Fatalf("contenido = %q", string(data))
+	}
+}
+
+func TestHttpGet(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprint(w, "ok-body")
+	}))
+	defer srv.Close()
+	out, err := httpGet(context.Background(), toolArgs{URL: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "ok-body") || !strings.Contains(out, "200") {
+		t.Fatalf("out = %q", out)
+	}
+
+	errSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer errSrv.Close()
+	if _, err := httpGet(context.Background(), toolArgs{URL: errSrv.URL}); err == nil {
+		t.Fatal("esperaba error HTTP 404")
+	}
+}
+
 func TestMemIntent(t *testing.T) {
 	for _, in := range []string{"recordá que trabajo en /home/x", "guarda esto", "tené presente que uso fish", "prefiero go", "anota el puerto 8080"} {
 		if !memIntent(in) {

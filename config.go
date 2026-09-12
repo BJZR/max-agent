@@ -22,6 +22,8 @@ type Config struct {
 	AutoApprove  bool    `yaml:"auto_approve"`
 	Persist      bool    `yaml:"persist"`
 	Shell        string  `yaml:"shell"`
+	MaxSteps     int     `yaml:"max_steps"`
+	CtxChars     int     `yaml:"ctx_chars"`
 	ServerAddr   string  `yaml:"server_addr"`
 }
 
@@ -37,6 +39,8 @@ func defaultConfig() Config {
 		Memory:       true,
 		AutoApprove:  false,
 		Persist:      true,
+		MaxSteps:     12,
+		CtxChars:     16000,
 		ServerAddr:   ":8090",
 	}
 }
@@ -69,6 +73,12 @@ func normalize(cfg Config) Config {
 	}
 	if cfg.NumCtx == 0 {
 		cfg.NumCtx = base.NumCtx
+	}
+	if cfg.MaxSteps <= 0 {
+		cfg.MaxSteps = base.MaxSteps
+	}
+	if cfg.CtxChars <= 0 {
+		cfg.CtxChars = base.CtxChars
 	}
 	if cfg.Temperature == 0 {
 		cfg.Temperature = base.Temperature

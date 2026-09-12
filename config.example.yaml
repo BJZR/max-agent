@@ -14,5 +14,7 @@ context: true                      # inyecta el contexto del entorno al arrancar
 persist: true                      # guarda sesiones en ~/.max/sessions.json
 memory: true                        # memoria persistente entre sesiones (~/.max/memory.md)
 shell: ""                          # shell para run_command (vacío = la del usuario)
+max_steps: 12                      # pasos máximos del agente por turno
+ctx_chars: 16000                   # presupuesto de contexto (caracteres)
 
 server_addr: ":8090"               # solo para el modo web

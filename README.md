@@ -49,9 +49,13 @@ También se puede editar `prompts/default.md` para cambiar la personalidad del a
 |------------------|-------------------------------------|-----------|
 | run_command      | ejecuta comandos shell              | sí        |
 | write_file       | escribe archivos                    | sí        |
+| edit_file        | reemplazo exacto dentro de un archivo | sí      |
+| append_file      | agrega contenido al final de un archivo | sí    |
 | read_file        | lee archivos (con rango opcional)   | no        |
 | list_dir         | lista directorios                   | no        |
 | search_files     | grep en el proyecto                 | no        |
+| tree             | árbol de directorios (con profundidad) | no     |
+| http_get         | descarga el contenido de una URL    | no        |
 
 Las herramientas peligrosas piden confirmación (`y/N`). Con `-yes` o `auto_approve: true` se ejecutan solas. Si el stdin no es un terminal (pipe), se auto-aprueban: `echo "haz un test" | ./max -yes`.
 

@@ -38,7 +38,19 @@ type Agent struct {
 	onToolOut   func(string)
 }
 
-const maxSteps = 12
+func (a *Agent) maxSteps() int {
+	if a.config.MaxSteps > 0 {
+		return a.config.MaxSteps
+	}
+	return 12
+}
+
+func (a *Agent) ctxBudget() int {
+	if a.config.CtxChars > 0 {
+		return a.config.CtxChars
+	}
+	return 16000
+}
 
 var taskWords = []string{
 	"haz", "hace", "hacer", "crea", "crear", "genera", "escribe", "escríbeme", "implementa",
@@ -75,21 +87,25 @@ func memIntent(s string) bool {
 const nudgeMsg = "No ejecutaste nada todavía. Si la petición toca la máquina, hazlo AHORA: envía los comandos en un bloque ```bash (primero explora con ls, cat, grep -n, rg; verifica antes de actuar). No repitas la explicación: ejecuta."
 
 func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, []Msg, error) {
-	msgs := make([]Msg, 0, len(history)+maxSteps+2)
+	steps := a.maxSteps()
+	budget := a.ctxBudget()
+	msgs := make([]Msg, 0, len(history)+steps+2)
 	msgs = append(msgs, Msg{Role: "system", Content: a.system})
 	if a.memory != nil && a.config.Memory {
 		if blk := a.memory.Block(); blk != "" {
 			msgs = append(msgs, Msg{Role: "user", Content: blk})
 		}
 	}
-	msgs = append(msgs, condense(history, ctxCharsBudget)...)
+	msgs = append(msgs, condense(history, budget)...)
 	msgs = append(msgs, Msg{Role: "user", Content: input})
 
 	nudged := false
 	anythingExecuted := false
 	attempted := map[string]bool{}
-	for step := 0; step < maxSteps; step++ {
-		msgs = condense(msgs, ctxCharsBudget)
+	for step := 0; step < steps; step++ {
+		if totalChars(msgs) > budget {
+			msgs = condense(msgs, budget)
+		}
 		lastUser := input
 		for i := len(msgs) - 1; i >= 0; i-- {
 			if msgs[i].Role == "user" {
@@ -193,7 +209,7 @@ func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, 
 		}
 		return resp.Content, filterNudge(msgs[1:]), nil
 	}
-	return "", filterNudge(msgs[1:]), fmt.Errorf("límite de pasos de agente alcanzado (%d)", maxSteps)
+	return "", filterNudge(msgs[1:]), fmt.Errorf("límite de pasos de agente alcanzado (%d)", steps)
 }
 
 const memArchivistSystem = "Sos el archivista de memoria de MAX, un agente minimalista. Te pasan una conversación reciente del asistente. Si contiene 1-3 hechos estables y durables que el agente deba recordar SIEMPRE, en cualquier sesión futura (preferencias del usuario, ubicación de proyectos, decisiones técnicas, versión de herramientas, comandos o trucos que funcionan), devolvé SOLO una línea por hecho usando el formato '- hecho'. Si no hay nada durable que valga la pena recordar, devolvé exactamente la palabra NADA. No repitas instrucciones ni conversación: solo hechos durables."
@@ -251,6 +267,14 @@ func filterNudge(msgs []Msg) []Msg {
 }
 
 const ctxCharsBudget = 16000
+
+func totalChars(msgs []Msg) int {
+	var n int
+	for _, m := range msgs {
+		n += len(m.Content) + len(m.ToolCallID) + len(m.Name)
+	}
+	return n
+}
 
 func condense(msgs []Msg, budget int) []Msg {
 	if len(msgs) == 0 {

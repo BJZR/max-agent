@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +33,7 @@ var dangerous = map[string]bool{
 	"run_command": true,
 	"write_file":  true,
 	"edit_file":   true,
+	"append_file": true,
 }
 
 func funcSpec(name, desc string, required []string, props map[string]any) toolSpec {
@@ -104,6 +107,20 @@ func init() {
 				"path":  strParam("directorio raíz (por defecto .)"),
 				"depth": strParam("profundidad máxima, ej: 2 (por defecto 2)"),
 			}),
+		funcSpec("append_file",
+			"Agrega contenido al final de un archivo. Si no existe, lo crea.",
+			[]string{"path", "content"},
+			map[string]any{
+				"path":    strParam("ruta del archivo"),
+				"content": strParam("contenido a agregar al final"),
+			}),
+		funcSpec("http_get",
+			"Descarga el contenido de una URL (GET) y devuelve el cuerpo truncado. Útil para leer docs, APIs y páginas sin usar el shell.",
+			[]string{"url"},
+			map[string]any{
+				"url":     strParam("URL completa, ej: https://example.com/api"),
+				"timeout": strParam("duración máxima, ej: 10s (opcional)"),
+			}),
 	}
 }
 
@@ -119,6 +136,7 @@ type toolArgs struct {
 	Old     string `json:"old"`
 	New     string `json:"new"`
 	Depth   string `json:"depth"`
+	URL     string `json:"url"`
 }
 
 func execTool(ctx context.Context, ws *Workspace, shell, name string, raw json.RawMessage) (string, error) {
@@ -141,6 +159,10 @@ func execTool(ctx context.Context, ws *Workspace, shell, name string, raw json.R
 		return editFile(ctx, ws, a)
 	case "tree":
 		return tree(ctx, ws, a)
+	case "append_file":
+		return appendFile(ctx, ws, a)
+	case "http_get":
+		return httpGet(ctx, a)
 	}
 	return "", fmt.Errorf("herramienta desconocida: %s", name)
 }
@@ -522,4 +544,59 @@ func tree(ctx context.Context, ws *Workspace, a toolArgs) (string, error) {
 	sb.WriteString(base + "/\n")
 	walk(root, "", 1)
 	return sb.String(), nil
+}
+
+func appendFile(ctx context.Context, ws *Workspace, a toolArgs) (string, error) {
+	if a.Path == "" {
+		return "", fmt.Errorf("falta la ruta")
+	}
+	p := ws.Resolve(a.Path)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		return "", err
+	}
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	n, err := f.WriteString(a.Content)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("agregado a %s (%d bytes)", a.Path, n), nil
+}
+
+func httpGet(ctx context.Context, a toolArgs) (string, error) {
+	if a.URL == "" {
+		return "", fmt.Errorf("falta la url")
+	}
+	d := 15 * time.Second
+	if a.Timeout != "" {
+		if td, err := time.ParseDuration(a.Timeout); err == nil && td > 0 {
+			d = td
+		}
+	}
+	if d > 30*time.Second {
+		d = 30 * time.Second
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.URL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "MAX-agent/1.0")
+	client := &http.Client{Timeout: d}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 20000))
+	if err != nil {
+		return "", err
+	}
+	s := fmt.Sprintf("[%s %d] %s", resp.Header.Get("Content-Type"), resp.StatusCode, truncate(string(body), 20000))
+	if resp.StatusCode >= 400 {
+		return s, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return s, nil
 }
