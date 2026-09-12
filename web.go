@@ -158,6 +158,7 @@ func (app *webApp) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"model": app.cfg.Model,
 		"cwd":   cwd,
 		"tools": app.cfg.Tools,
+		"shell": app.cfg.Shell,
 	})
 }
 

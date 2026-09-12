@@ -359,6 +359,27 @@ func TestWorkspaceCd(t *testing.T) {
 	}
 }
 
+func TestRuntimeEnv(t *testing.T) {
+	env := runtimeEnv()
+	var path string
+	found := false
+	for _, e := range env {
+		if strings.HasPrefix(e, "PATH=") {
+			path = strings.TrimPrefix(e, "PATH=")
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("sin PATH en el entorno")
+	}
+	if !strings.Contains(path, "/usr/local/go/bin") {
+		t.Fatalf("PATH no incluye /usr/local/go/bin: %q", path)
+	}
+	if !strings.Contains(path, "/usr/bin") {
+		t.Fatalf("PATH no incluye /usr/bin: %q", path)
+	}
+}
+
 func TestCdIfNeededStrict(t *testing.T) {
 	dir := t.TempDir()
 	ws := newWorkspace()

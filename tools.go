@@ -250,6 +250,7 @@ func runCommand(ctx context.Context, ws *Workspace, shell string, a toolArgs) (s
 	defer cancel()
 	cmd := exec.CommandContext(cctx, shell, "-c", a.Command)
 	cmd.Dir = ws.Cwd()
+	cmd.Env = runtimeEnv()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
@@ -267,6 +268,39 @@ func runCommand(ctx context.Context, ws *Workspace, shell string, a toolArgs) (s
 		return s, fmt.Errorf("salida: %v", err)
 	}
 	return s, nil
+}
+
+// runtimeEnv devuelve el entorno del proceso con un PATH enriquecido con los
+// directorios de binarios más comunes (Go, GOPATH, estándares), para que
+// herramientas como `go` funcionen aunque el servicio no herede ese PATH.
+func runtimeEnv() []string {
+	path := os.Getenv("PATH")
+	if path == "" {
+		path = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+	}
+	home, err := os.UserHomeDir()
+	dirs := []string{"/usr/local/go/bin"}
+	if err == nil && home != "" {
+		dirs = append(dirs, home+"/go/bin")
+	}
+	dirs = append(dirs, "/usr/local/bin", "/usr/bin", "/bin")
+	var extra []string
+	for _, d := range dirs {
+		if d != "" && !strings.Contains(path, d) {
+			extra = append(extra, d)
+		}
+	}
+	if len(extra) > 0 {
+		path = strings.Join(extra, ":") + ":" + path
+	}
+	env := os.Environ()
+	for i, e := range env {
+		if strings.HasPrefix(e, "PATH=") {
+			env[i] = "PATH=" + path
+			return env
+		}
+	}
+	return append(env, "PATH="+path)
 }
 
 func readFile(ctx context.Context, ws *Workspace, a toolArgs) (string, error) {

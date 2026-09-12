@@ -66,8 +66,9 @@ textarea{flex:1;resize:none;background:var(--panel);border:1px solid var(--line2
 textarea:focus{border-color:var(--acc)}
 textarea::placeholder{color:var(--dim)}
 #send{flex:none;height:46px;padding:0 24px;border:0;border-radius:12px;background:var(--acc);color:#052b18;font:700 14px var(--sans);cursor:pointer;transition:filter .12s}
-#send:hover:not(:disabled){filter:brightness(1.1)}
-#send:disabled{opacity:.45;cursor:default}
+  #send:hover:not(:disabled){filter:brightness(1.1)}
+  #send:disabled{opacity:.45;cursor:default}
+  #send.stop{background:#2a1116;color:#ffb0b0;border:1px solid #5f2b33}
 #stop{flex:none;height:46px;padding:0 18px;border:1px solid var(--danger,#5f2b33);border-radius:12px;background:#2a1116;color:#ffb0b0;font:700 13px var(--sans);cursor:pointer}
 #stop:hover{background:#3a1a1a}
 .hint{max-width:min(920px,100%);margin:6px auto 0;font-size:11px;color:var(--dim)}
@@ -107,6 +108,7 @@ select:focus{border-color:var(--acc)}
     <button id="newsess" class="iconbtn" title="nueva sesión">+</button>
     <button id="delsess" class="iconbtn danger" title="borrar sesión actual">×</button>
     <span class="chip" id="model">conectando…</span>
+    <span class="chip" id="shell" hidden></span>
     <span class="chip" id="cwd" hidden></span>
   </div>
 </header>
@@ -114,7 +116,6 @@ select:focus{border-color:var(--acc)}
 <footer>
   <div class="bar inner" style="max-width:min(920px,100%);padding:0">
     <textarea id="input" rows="1" placeholder="Preguntá o mandá una tarea…" autocomplete="off"></textarea>
-    <button id="stop" hidden>Detener</button>
     <button id="send" disabled>Enviar</button>
   </div>
   <p class="hint">Enter envía · Shift+Enter salto de línea · ESC ×3 detiene la generación</p>
@@ -122,8 +123,8 @@ select:focus{border-color:var(--acc)}
 <script>
 const scroller=document.getElementById('scroller'),log=document.getElementById('log'),
       inp=document.getElementById('input'),sendbtn=document.getElementById('send'),
-      stopBtn=document.getElementById('stop'),
-      modelEl=document.getElementById('model'),cwdEl=document.getElementById('cwd'),
+      modelEl=document.getElementById('model'),
+      shellEl=document.getElementById('shell'),cwdEl=document.getElementById('cwd'),
       statusEl=document.getElementById('status'),sessionsEl=document.getElementById('sessions'),
       newsBtn=document.getElementById('newsess'),delBtn=document.getElementById('delsess');
 let session=null,busy=false,ty=null,controller=null,lastToolRow=null;
@@ -208,22 +209,23 @@ async function decide(id,action,row){
 }
 
 function autogrow(){
+  if(busy){sendbtn.disabled=false;return;}
   inp.style.height='auto';
   inp.style.height=Math.min(inp.scrollHeight,180)+'px';
-  sendbtn.disabled=busy||!inp.value.trim().length;
+  sendbtn.disabled=!inp.value.trim().length;
 }
 
 async function send(){
   const text=inp.value.trim();
   if(!text||busy)return;
-  busy=true;sendbtn.disabled=true;inp.value='';inp.style.height='auto';
+  busy=true;sendbtn.textContent='■';sendbtn.classList.add('stop');sendbtn.disabled=false;
+  inp.value='';inp.style.height='auto';
   appendMsg(text,'user');
   history.push({role:'user',content:text});
 
   const out=streamStart();
   let answer='';lastToolRow=null;
   controller=new AbortController();
-  stopBtn.hidden=false;
   try{
     const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({session,messages:history,text}),signal:controller.signal});
@@ -264,7 +266,9 @@ async function send(){
   finish();
 }
 function finish(){
-  busy=false;controller=null;sendbtn.disabled=false;stopBtn.hidden=true;
+  busy=false;controller=null;
+  sendbtn.textContent='Enviar';sendbtn.classList.remove('stop');
+  sendbtn.disabled=!inp.value.trim().length;
   if(session)refreshList(session);
   autogrow();inp.focus();
 }
@@ -310,9 +314,10 @@ async function newSession(){
 }
 
 function autogrow(){
+  if(busy){sendbtn.disabled=false;return;}
   inp.style.height='auto';
   inp.style.height=Math.min(inp.scrollHeight,180)+'px';
-  sendbtn.disabled=busy||!inp.value.trim().length;
+  sendbtn.disabled=!inp.value.trim().length;
 }
 
 let escStrikes=0,escTimer=null;
@@ -331,6 +336,7 @@ async function boot(){
     ]);
     modelEl.textContent=m.model||'?';
     if(i.cwd){cwdEl.textContent=i.cwd;cwdEl.hidden=false;}
+    if(i.shell){shellEl.textContent=i.shell;shellEl.hidden=false;}
     statusEl.className='dot '+(i.tools?'ok':'err');
     statusEl.title=i.tools?'conectado · herramientas activas':'herramientas desactivadas';
   }catch(e){
@@ -349,8 +355,7 @@ function submit(ev){
 }
 inp.addEventListener('keydown',submit);
 inp.addEventListener('input',autogrow);
-sendbtn.addEventListener('click',send);
-stopBtn.addEventListener('click',()=>{if(busy&&controller)controller.abort();});
+sendbtn.addEventListener('click',()=>{if(busy){if(controller)controller.abort();}else send();});
 sessionsEl.addEventListener('change',()=>{if(busy)return;loadMessages(sessionsEl.value);});
 newsBtn.addEventListener('click',newSession);
 delBtn.addEventListener('click',async()=>{
