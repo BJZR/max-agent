@@ -294,6 +294,9 @@ func runCommand(ctx context.Context, ws *Workspace, shell string, a toolArgs) (s
 	if strings.TrimSpace(a.Command) == "" {
 		return "", fmt.Errorf("falta el comando")
 	}
+	if words := strings.Fields(a.Command); len(words) > 0 && maxToolNames[words[0]] {
+		return "", fmt.Errorf("%s es una herramienta de MAX, no un comando de la terminal. Invocala en un bloque con tres acentos y la palabra max, por ejemplo: \n```max\n%s ...\n```", words[0], words[0])
+	}
 	if hint := interactiveBlocked(a.Command); hint != "" {
 		return "", fmt.Errorf("no puedo ejecutar eso (cuelga la sesión): %s", hint)
 	}

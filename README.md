@@ -65,6 +65,17 @@ También se puede editar `prompts/default.md` para cambiar la personalidad del a
 Las herramientas peligrosas piden confirmación (`y/N`). Con `-yes` o `auto_approve: true` se ejecutan solas. Si el stdin no es un terminal (pipe), se auto-aprueban: `echo "haz un test" | ./max -yes`.
 
 ### API de herramientas nativas + fallback de code-fences
+MAX usa `tool_calls` nativos cuando el servidor/modelo los soporta, y además un **fallback que funciona con cualquier modelo**: el system prompt le pide al modelo que trabaje vía code-fences. Si la respuesta no trae `tool_calls` pero tiene bloques ```bash``` o ```max```, MAX los extrae, los manda por el mismo flujo de aprobación/ejecución y le devuelve la salida al modelo para continuar. Esto hace que un llama-server local con un modelo sin tool-support real también pueda trabajar.
+
+### Fences ```bash``` y ```max```
+Además de los `tool_calls` nativos, el modelo puede mandar comandos en un bloque ```bash``` (se ejecutan por el shell del usuario con aprobación si es peligroso) y **herramientas propias de MAX** en un bloque ```max``` (una por línea, argumentos entre comillas o `clave=valor`):
+```max
+web_search "mejores editores de 2026" max=5
+http_get "https://es.wikipedia.org/wiki/Hipopótamo"
+git_status
+git_log n=5
+```
+Si el modelo escribe una herramienta de MAX como si fuera un comando bash, `run_command` devuelve un aviso redirigiéndolo al bloque `max`.
 MAX usa `tool_calls` nativos cuando el servidor/modelo los soporta, y además un **fallback que funciona con cualquier modelo**: si la respuesta no trae `tool_calls` pero tiene comandos dentro de bloques ```bash``` (según el system prompt), MAX los extrae, los manda por el mismo flujo de aprobación/ejecución y le devuelve la salida al modelo para continuar. Esto hace que un llama-server local con un modelo 3B sin tool-support real también pueda trabajar.
 
 ### Directorio de trabajo persistente

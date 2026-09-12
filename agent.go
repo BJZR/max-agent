@@ -5,20 +5,116 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
 
-var fenceRe = regexp.MustCompile("(?s)```(?:bash|sh|shell)?[ \t]*\n(.*?)```")
+type toolOp struct {
+	kind string // "cmd" o "tool"
+	text string
+	name string
+	args map[string]any
+}
 
-func fencedCommands(s string) []string {
-	var out []string
+var fenceRe = regexp.MustCompile("(?s)```([A-Za-z0-9]*)[ \t]*\n(.*?)```")
+var bashLangs = map[string]bool{"bash": true, "sh": true, "shell": true, "zsh": true, "fish": true}
+var maxLangs = map[string]bool{"max": true, "tools": true, "tool": true}
+var maxPrimary = map[string]string{
+	"web_search": "query", "http_get": "url",
+	"git_status": "path", "git_branch": "path", "git_log": "path", "git_diff": "path",
+}
+var maxToolNames = map[string]bool{"web_search": true, "http_get": true, "git_status": true, "git_branch": true, "git_log": true, "git_diff": true}
+
+func fenceOps(s string) []toolOp {
+	var out []toolOp
 	for _, m := range fenceRe.FindAllStringSubmatch(s, -1) {
-		if c := strings.TrimSpace(m[1]); c != "" {
-			out = append(out, c)
+		lang := strings.ToLower(strings.TrimSpace(m[1]))
+		body := strings.TrimSpace(m[2])
+		if body == "" {
+			continue
+		}
+		switch {
+		case lang == "" || bashLangs[lang]:
+			out = append(out, toolOp{kind: "cmd", text: body})
+		case maxLangs[lang]:
+			for _, line := range strings.Split(body, "\n") {
+				if to := parseMaxLine(line); to != nil {
+					out = append(out, *to)
+				}
+			}
 		}
 	}
 	return out
+}
+
+func fencedCommands(s string) []string {
+	var out []string
+	for _, op := range fenceOps(s) {
+		if op.kind == "cmd" {
+			out = append(out, op.text)
+		}
+	}
+	return out
+}
+
+func parseMaxLine(line string) *toolOp {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+	fields := strings.SplitN(line, " ", 2)
+	name := strings.TrimSpace(fields[0])
+	if _, ok := maxPrimary[name]; !ok {
+		return nil
+	}
+	to := &toolOp{kind: "tool", name: name, args: map[string]any{}}
+	if len(fields) == 1 {
+		return to
+	}
+	rest := strings.TrimSpace(fields[1])
+	var toks []string
+	var cur strings.Builder
+	inQ := false
+	for _, r := range rest {
+		switch {
+		case r == '"':
+			inQ = !inQ
+		case r == ' ' || r == '\t':
+			if inQ {
+				cur.WriteRune(r)
+			} else if cur.Len() > 0 {
+				toks = append(toks, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if cur.Len() > 0 {
+		toks = append(toks, cur.String())
+	}
+	primary := maxPrimary[name]
+	for _, t := range toks {
+		if k, v, ok := strings.Cut(t, "="); ok {
+			if k == "max" {
+				if n, err := strconv.Atoi(v); err == nil {
+					to.args["max"] = strconv.Itoa(n)
+				}
+			} else if k == "n" {
+				if n, err := strconv.Atoi(v); err == nil {
+					to.args["n"] = strconv.Itoa(n)
+				}
+			} else {
+				to.args[k] = v
+			}
+			continue
+		}
+		if _, ok := to.args[primary]; !ok {
+			to.args[primary] = t
+		}
+	}
+	return to
 }
 
 type Approver interface {
@@ -151,33 +247,47 @@ func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, 
 			continue
 		}
 		if a.config.Tools {
-			if cmds := fencedCommands(resp.Content); len(cmds) > 0 {
+			if ops := fenceOps(resp.Content); len(ops) > 0 {
 				var results strings.Builder
 				executed := false
 				failed := false
-				for _, c := range cmds {
-					if attempted[c] {
-						results.WriteString("$ " + c + "\n(BLOQUEADO: este comando ya falló y no se re-ejecuta. Estás en " + a.ws.Cwd() + ". Probá un comando NUEVO y más simple.)\n")
+				for _, op := range ops {
+					key := op.text
+					if op.kind == "tool" {
+						key = op.name + " " + op.text
+					}
+					if attempted[key] {
+						results.WriteString("$ " + key + "\n(BLOQUEADO: esto ya falló y no se re-ejecuta. Estás en " + a.ws.Cwd() + ". Probá una alternativa NUEVA.)\n")
 						failed = true
 						executed = true
 						continue
 					}
-					attempted[c] = true
-					args, _ := json.Marshal(map[string]any{"command": c, "timeout": "120s"})
+					attempted[key] = true
+					name := "run_command"
+					disp := op.text
+					var raw json.RawMessage
+					if op.kind == "tool" {
+						name = op.name
+						b, _ := json.Marshal(map[string]any(op.args))
+						raw = b
+					} else {
+						b, _ := json.Marshal(map[string]any{"command": op.text, "timeout": "120s"})
+						raw = b
+					}
 					if a.onTool != nil {
-						a.onTool("run_command", c)
+						a.onTool(name, disp)
 					}
 					if a.approver != nil {
-						approved, err := a.approver.Approve("run_command", c)
+						approved, err := a.approver.Approve(name, disp)
 						if err != nil {
 							return "", msgs[1:], err
 						}
 						if !approved {
-							results.WriteString("$ " + c + "\n(usuario rechazó)\n")
+							results.WriteString("$ " + key + "\n(usuario rechazó)\n")
 							continue
 						}
 					}
-					out, err := execTool(ctx, a.ws, a.config.Shell, "run_command", args)
+					out, err := execTool(ctx, a.ws, a.config.Shell, name, raw)
 					if a.onToolOut != nil {
 						a.onToolOut(out)
 					}
@@ -185,14 +295,14 @@ func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, 
 						out = "error: " + err.Error() + "\n" + out
 						failed = true
 					}
-					results.WriteString("$ " + c + "\n" + out + "\n")
+					results.WriteString("$ " + key + "\n" + out + "\n")
 					executed = true
 					anythingExecuted = true
 				}
 				if executed {
-					msg := "Resultado de los comandos que ejecutaste:\n" + strings.TrimSpace(results.String())
+					msg := "Resultado de las herramientas que ejecutaste:\n" + strings.TrimSpace(results.String())
 					if failed {
-						msg += "\n\nAl menos un comando falló. Estás en " + a.ws.Cwd() + ". No repitas el comando que falló: empezá por el PRIMER error. Comandos CORTOS, de a uno: si falta la carpeta, creala (mkdir -p). Si falta un header/import, agregalo antes de compilar. Reintentá con un comando distinto."
+						msg += "\n\nAl menos una herramienta falló. Estás en " + a.ws.Cwd() + ". No repitas lo que falló: empezá por el PRIMER error. Comandos CORTOS, de a uno. Reintentá con algo distinto."
 					}
 					msgs = append(msgs, Msg{Role: "user", Content: msg})
 					continue

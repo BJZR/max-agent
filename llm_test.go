@@ -599,6 +599,77 @@ func TestResolve(t *testing.T) {
 	}
 }
 
+func TestParseMaxLine(t *testing.T) {
+	op := parseMaxLine(`web_search "hola mundo" max=3`)
+	if op == nil || op.name != "web_search" {
+		t.Fatalf("op = %+v", op)
+	}
+	if op.args["query"] != "hola mundo" || op.args["max"] != "3" {
+		t.Fatalf("args = %+v", op.args)
+	}
+	op = parseMaxLine("git_log n=5")
+	if op == nil || op.args["n"] != "5" {
+		t.Fatalf("op = %+v", op)
+	}
+	op = parseMaxLine("git_status")
+	if op == nil || len(op.args) != 0 {
+		t.Fatalf("op = %+v", op)
+	}
+	op = parseMaxLine("hacer_algo x")
+	if op != nil {
+		t.Fatalf("esperaba nil, op = %+v", op)
+	}
+}
+
+func TestMaxFenceRouting(t *testing.T) {
+	body := "el cuerpo pagado ok"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, body)
+	}))
+	defer srv.Close()
+	calls := 0
+	llm := fakeLLM(t, func(last string) string {
+		calls++
+		if calls == 1 {
+			return sseChunks(map[string]any{"role": "assistant", "content": "Voy a leer:\n\n```max\nhttp_get " + `"` + srv.URL + `/x` + `"` + "\n```"})
+		}
+		return sseChunks(map[string]any{"role": "assistant", "content": "Listo, ya está."})
+	})
+	defer llm.Close()
+	p := NewProvider(Config{BaseURL: llm.URL, Model: "test", Tools: true, Temperature: 0.2})
+	agent := &Agent{prov: p, config: Config{Tools: true}, system: "test", ws: newWorkspace(), approver: &alwaysApprove{}}
+	content, hist, err := agent.Chat(context.Background(), nil, "leé esa página")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != "Listo, ya está." {
+		t.Fatalf("content = %q", content)
+	}
+	if calls < 2 {
+		t.Fatalf("calls = %d", calls)
+	}
+	found := false
+	for _, m := range hist {
+		if strings.Contains(m.Content, "Resultado de las herramientas") && strings.Contains(m.Content, "el cuerpo pagado ok") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("falta resultado de herramienta en historial: %+v", hist)
+	}
+}
+
+func TestRunCommandRedirectsMaxTool(t *testing.T) {
+	ws := newWorkspace()
+	out, err := runCommand(context.Background(), ws, "sh", toolArgs{Command: "web_search hola"})
+	if err == nil {
+		t.Fatalf("esperaba error, out = %q", out)
+	}
+	if !strings.Contains(err.Error(), "herramienta de MAX") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestFencedCommands(t *testing.T) {
 	s := "texto\n```bash\nls -la\n```\n```sh\necho hola\ncd /tmp\n```\n```c\nint x = 1;\n```\ny fin"
 	got := fencedCommands(s)
@@ -830,7 +901,7 @@ func TestAgentFenceFallback(t *testing.T) {
 	}
 	found := false
 	for _, m := range hist {
-		if strings.Contains(m.Content, "Resultado de los comandos") && strings.Contains(m.Content, "hello_max_fence") {
+		if strings.Contains(m.Content, "Resultado de las herramientas") && strings.Contains(m.Content, "hello_max_fence") {
 			found = true
 		}
 	}
