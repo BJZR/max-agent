@@ -44,12 +44,27 @@ var taskWords = []string{
 	"haz", "hace", "hacer", "crea", "crear", "genera", "escribe", "escríbeme", "implementa",
 	"instala", "arregla", "corrige", "corrigeme", "repara", "busca", "analiza", "investiga",
 	"compila", "ejecuta", "corre", "prueba", "muestra", "verifica", "modifica", "actualiza",
-	"agrega", "añade", "elimina", "borra", "quita", "cambia", "build", "install", "test",
+	"instalar", "construye", "parsea", "descarga", "extrae", "ordena",
+}
+
+var memWords = []string{
+	"recuerda", "recorda", "guarda", "memoriza", "memoria", "acordate", "anota",
+	"no olvides", "tené presente", "ten presente", "de preferencia", "prefiero",
 }
 
 func looksLikeTask(s string) bool {
 	low := strings.ToLower(s)
 	for _, w := range taskWords {
+		if strings.Contains(low, w) {
+			return true
+		}
+	}
+	return false
+}
+
+func memIntent(s string) bool {
+	low := strings.ToLower(s)
+	for _, w := range memWords {
 		if strings.Contains(low, w) {
 			return true
 		}
@@ -173,7 +188,7 @@ func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, 
 			msgs = append(msgs, Msg{Role: "user", Content: nudgeMsg})
 			continue
 		}
-		if a.config.Memory && a.memory != nil && (anythingExecuted || looksLikeTask(input)) {
+		if a.config.Memory && a.memory != nil && (anythingExecuted || looksLikeTask(input) || memIntent(input)) {
 			a.extractMemory(ctx, msgs)
 		}
 		return resp.Content, filterNudge(msgs[1:]), nil

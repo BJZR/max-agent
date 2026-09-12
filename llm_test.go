@@ -615,6 +615,19 @@ func TestFencedCommands(t *testing.T) {
 	}
 }
 
+func TestMemIntent(t *testing.T) {
+	for _, in := range []string{"recordá que trabajo en /home/x", "guarda esto", "tené presente que uso fish", "prefiero go", "anota el puerto 8080"} {
+		if !memIntent(in) {
+			t.Fatalf("esperaba memIntent en %q", in)
+		}
+	}
+	for _, in := range []string{"hola", "cuánto es 2+2?", "explica qué es un mutex", "haz un hello world"} {
+		if memIntent(in) {
+			t.Fatalf("no esperaba memIntent en %q", in)
+		}
+	}
+}
+
 func TestEnvSnapshot(t *testing.T) {
 	s := envSnapshot()
 	if s == "" {
