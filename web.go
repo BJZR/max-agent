@@ -19,6 +19,7 @@ type webApp struct {
 	cfg        Config
 	prov       *Provider
 	system     string
+	memory     *Memory
 	mu         sync.Mutex
 	pending    map[string]chan bool
 	sessions   map[string][]Msg
@@ -93,6 +94,9 @@ func runWeb(cfg Config, prov *Provider, system string) {
 		pending:    map[string]chan bool{},
 		sessions:   map[string][]Msg{},
 		workspaces: map[string]*Workspace{},
+	}
+	if cfg.Memory {
+		app.memory = loadMemory()
 	}
 
 	if cfg.Persist {
@@ -320,6 +324,7 @@ func (app *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 		config:   app.cfg,
 		system:   app.system,
 		ws:       ws,
+		memory:   app.memory,
 		approver: &webApprover{app: app, ctx: ctx, auto: app.cfg.AutoApprove, write: write},
 		onToken:  func(t string) { write(sseMsg{Type: "token", Text: t}) },
 		onToolOut: func(s string) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var fenceRe = regexp.MustCompile("(?s)```(?:bash|sh|shell)?[ \t]*\n(.*?)```")
@@ -30,6 +31,7 @@ type Agent struct {
 	system      string
 	approver    Approver
 	ws          *Workspace
+	memory      *Memory
 	onToken     func(string)
 	onReasoning func(string)
 	onTool      func(name, args string)
@@ -60,6 +62,11 @@ const nudgeMsg = "No ejecutaste nada todavía. Si la petición toca la máquina,
 func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, []Msg, error) {
 	msgs := make([]Msg, 0, len(history)+maxSteps+2)
 	msgs = append(msgs, Msg{Role: "system", Content: a.system})
+	if a.memory != nil && a.config.Memory {
+		if blk := a.memory.Block(); blk != "" {
+			msgs = append(msgs, Msg{Role: "user", Content: blk})
+		}
+	}
 	msgs = append(msgs, condense(history, ctxCharsBudget)...)
 	msgs = append(msgs, Msg{Role: "user", Content: input})
 
@@ -166,15 +173,61 @@ func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, 
 			msgs = append(msgs, Msg{Role: "user", Content: nudgeMsg})
 			continue
 		}
+		if a.config.Memory && a.memory != nil && (anythingExecuted || looksLikeTask(input)) {
+			a.extractMemory(ctx, msgs)
+		}
 		return resp.Content, filterNudge(msgs[1:]), nil
 	}
 	return "", filterNudge(msgs[1:]), fmt.Errorf("límite de pasos de agente alcanzado (%d)", maxSteps)
 }
 
+const memArchivistSystem = "Sos el archivista de memoria de MAX, un agente minimalista. Te pasan una conversación reciente del asistente. Si contiene 1-3 hechos estables y durables que el agente deba recordar SIEMPRE, en cualquier sesión futura (preferencias del usuario, ubicación de proyectos, decisiones técnicas, versión de herramientas, comandos o trucos que funcionan), devolvé SOLO una línea por hecho usando el formato '- hecho'. Si no hay nada durable que valga la pena recordar, devolvé exactamente la palabra NADA. No repitas instrucciones ni conversación: solo hechos durables."
+
+func (a *Agent) extractMemory(ctx context.Context, msgs []Msg) {
+	var b strings.Builder
+	b.WriteString("### Conversación reciente ###\n")
+	start := 0
+	if len(msgs) > 12 {
+		start = len(msgs) - 12
+	}
+	total := 0
+	for i := start; i < len(msgs) && total < 5000; i++ {
+		m := msgs[i]
+		line := m.Role + ": " + m.Content + "\n"
+		if total+len(line) > 5000 {
+			line = line[:5000-total]
+		}
+		b.WriteString(line)
+		total += len(line)
+	}
+	memMsgs := []Msg{
+		{Role: "system", Content: memArchivistSystem},
+		{Role: "user", Content: b.String()},
+	}
+	ectx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	resp, err := a.prov.Chat(ectx, memMsgs, nil, nil)
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(resp.Content, "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "-"))
+		low := strings.ToLower(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(low, "nada") || strings.EqualFold(line, "NADA") ||
+			strings.HasPrefix(low, "no hay") {
+			continue
+		}
+		a.memory.Add(line)
+	}
+}
+
 func filterNudge(msgs []Msg) []Msg {
 	out := make([]Msg, 0, len(msgs))
 	for _, m := range msgs {
-		if m.Role == "user" && m.Content == nudgeMsg {
+		if m.Role == "user" && (m.Content == nudgeMsg || strings.HasPrefix(m.Content, memBlockPrefix)) {
 			continue
 		}
 		out = append(out, m)
@@ -189,16 +242,22 @@ func condense(msgs []Msg, budget int) []Msg {
 		return msgs
 	}
 	head := []Msg{msgs[0]}
-	if len(msgs) > 1 && msgs[1].Role == "user" && strings.HasPrefix(msgs[1].Content, "[Contexto del entorno") {
-		head = append(head, msgs[1])
+	i := 1
+	isHead := func(m Msg) bool {
+		return m.Role == "user" && (strings.HasPrefix(m.Content, memBlockPrefix) ||
+			strings.HasPrefix(m.Content, "[Contexto del entorno"))
+	}
+	for i < len(msgs) && isHead(msgs[i]) {
+		head = append(head, msgs[i])
+		i++
 	}
 	total := 0
 	for _, m := range head {
 		total += len(m.Content)
 	}
 	var tail []Msg
-	for i := len(msgs) - 1; i >= len(head); i-- {
-		m := msgs[i]
+	for j := len(msgs) - 1; j >= i; j-- {
+		m := msgs[j]
 		if total+len(m.Content) > budget && len(tail) >= 2 {
 			break
 		}
@@ -207,7 +266,7 @@ func condense(msgs []Msg, budget int) []Msg {
 	}
 	out := make([]Msg, 0, len(msgs))
 	out = append(out, head...)
-	if len(head)+len(tail) < len(msgs) {
+	if i+len(tail) < len(msgs) {
 		out = append(out, Msg{Role: "user",
 			Content: "Parte de la conversación anterior se omitió por el límite de contexto. Continuá con la tarea usando lo último que se dijo."})
 	}

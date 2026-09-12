@@ -325,6 +325,87 @@ func TestRunCommandBadTimeoutFallsBack(t *testing.T) {
 	}
 }
 
+func TestMemoryStore(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "memory.md")
+	m := loadMemoryPath(p)
+	if m.List() != nil && len(m.List()) != 0 {
+		t.Fatal("memoria debería estar vacía")
+	}
+	m.Add("el usuario trabaja en ftui")
+	m.Add("el usuario trabaja en ftui")
+	m.Add("el modelo es qwen7b")
+	if got := m.List(); len(got) != 2 {
+		t.Fatalf("esperaba 2 entradas, tengo %d: %v", len(got), got)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("archivo de memoria no creado: %v", err)
+	}
+	m2 := loadMemoryPath(p)
+	if got := m2.List(); len(got) != 2 {
+		t.Fatalf("recarga: %v", got)
+	}
+	blk := m2.Block()
+	if !strings.HasPrefix(blk, "[MEMORIA") || !strings.Contains(blk, "ftui") {
+		t.Fatalf("block = %q", blk)
+	}
+	m2.Clear()
+	if got := m2.List(); len(got) != 0 {
+		t.Fatalf("clear no vació: %v", got)
+	}
+}
+
+func TestCondenseKeepsMemory(t *testing.T) {
+	msgs := []Msg{
+		{Role: "system", Content: "sys"},
+		{Role: "user", Content: "[MEMORIA (persistente entre sesiones)]\n- hecho a\n- hecho b"},
+		{Role: "user", Content: "[Contexto del entorno (dado por MAX)]\n..."},
+		{Role: "user", Content: "mensaje viejo uno"},
+		{Role: "user", Content: "mensaje viejo dos"},
+		{Role: "assistant", Content: "respuesta final"},
+	}
+	out := condense(msgs, 40)
+	if out[0].Role != "system" {
+		t.Fatalf("head[0] = %+v", out[0])
+	}
+	if !strings.HasPrefix(out[1].Content, "[MEMORIA") || !strings.HasPrefix(out[2].Content, "[Contexto del entorno") {
+		t.Fatalf("cabeza de memoria/entorno perdida: %q / %q", out[1].Content[:8], out[2].Content[:8])
+	}
+	last := out[len(out)-1]
+	if last.Content != "respuesta final" {
+		t.Fatalf("cola final = %q", last.Content)
+	}
+}
+
+func TestAgentMemoryExtraction(t *testing.T) {
+	calls := 0
+	srv := fakeLLM(t, func(last string) string {
+		calls++
+		switch {
+		case calls == 1:
+			return sseChunks(map[string]any{"role": "assistant", "content": "Hago:\n\n```bash\necho tarea\n```"})
+		case calls == 2:
+			return sseChunks(map[string]any{"role": "assistant", "content": "Listo."})
+		default:
+			return sseChunks(map[string]any{"role": "assistant", "content": "- el usuario trabaja en /home/ftui\n- nada más"})
+		}
+	})
+	defer srv.Close()
+	p := NewProvider(Config{BaseURL: srv.URL, Model: "test", Tools: true, Temperature: 0.2})
+	m := loadMemoryPath(filepath.Join(t.TempDir(), "memory.md"))
+	agent := &Agent{prov: p, config: Config{Tools: true, Memory: true}, system: "test",
+		ws: newWorkspace(), approver: &alwaysApprove{}, memory: m}
+	if _, _, err := agent.Chat(context.Background(), nil, "haz algo"); err != nil {
+		t.Fatal(err)
+	}
+	if calls < 3 {
+		t.Fatalf("calls = %d, esperaba llamada de archivista (3)", calls)
+	}
+	list := m.List()
+	if len(list) != 1 || !strings.Contains(list[0], "ftui") {
+		t.Fatalf("memoria extraída inválida: %v", list)
+	}
+}
+
 func TestWorkspaceCd(t *testing.T) {
 	dir := t.TempDir()
 	ws := newWorkspace()

@@ -23,6 +23,7 @@ func main() {
 		yes       = flag.Bool("yes", false, "auto-aprobar herramientas peligrosas")
 		noTool    = flag.Bool("no-tools", false, "desactivar herramientas")
 		noPersist = flag.Bool("no-persist", false, "no guardar sesiones en disco")
+		noMemory  = flag.Bool("no-memory", false, "desactivar memoria persistente")
 		shell     = flag.String("shell", "", "shell para ejecutar comandos (por defecto la del usuario)")
 		help      = flag.Bool("help", false, "mostrar ayuda")
 	)
@@ -40,6 +41,7 @@ uso: max [flags]
   -yes[bool]         aprobar herramientas sin preguntar
   -no-tools[bool]    desactivar herramientas
   -no-persist[bool]  no guardar sesiones en disco (~/.max/sessions.json)
+  -no-memory[bool]   desactivar memoria persistente (~/.max/memory.md)
   -help              esta ayuda
 
 ejemplos:
@@ -79,6 +81,9 @@ ejemplos:
 	}
 	if *noPersist {
 		cfg.Persist = false
+	}
+	if *noMemory {
+		cfg.Memory = false
 	}
 	if *shell != "" {
 		cfg.Shell = *shell

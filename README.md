@@ -64,12 +64,19 @@ Cada sesión mantiene su propio directorio de trabajo. Un comando `cd DIR` suelt
 ### Persistencia de sesiones
 MAX guarda el historial y el cwd de cada sesión en `~/.max/sessions.json` (desactivable con `persist: false` en la config o `-no-persist`). Al reiniciar, web restaura todas las sesiones y TUI la última conversación con su directorio de trabajo.
 
+### Memoria persistente (entre sesiones)
+Las sesiones guardan el historial de cada conversación; la **memoria** guarda hechos que cruzan sesiones en `~/.max/memory.md`. Tras cada tarea un "archivista" le pide al modelo extraer hechos durables y esos `- apuntes` se inyectan al inicio de **cualquier** sesión nueva (bloque `[MEMORIA]`). Se desactiva con `memory: false` en la config o `-no-memory`. En TUI: `/memory` para verla y `/memory clear` para borrarla.
+
 ## Comandos TUI
 ```
-/help    lista los comandos
-/tools   muestra las herramientas disponibles
-/clear   borra la conversación (y reinicia el contexto de entorno)
-/exit    sale (también /quit, o Ctrl+D)
+/help               lista los comandos
+/tools              muestra las herramientas disponibles
+/clear              borra la conversación (y reinicia el contexto de entorno)
+/memory             muestra la memoria persistente
+/memory clear       borra la memoria persistente
+/pwd                muestra el directorio de trabajo actual
+/cd DIR             cambia el directorio de trabajo de la sesión
+/exit               sale (también /quit, o Ctrl+D)
 ```
 
 Ejemplo de una sesión real:

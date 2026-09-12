@@ -18,6 +18,7 @@ type Config struct {
 	Temperature  float64 `yaml:"temperature"`
 	Tools        bool    `yaml:"tools"`
 	Context      bool    `yaml:"context"`
+	Memory       bool    `yaml:"memory"`
 	AutoApprove  bool    `yaml:"auto_approve"`
 	Persist      bool    `yaml:"persist"`
 	Shell        string  `yaml:"shell"`
@@ -33,6 +34,7 @@ func defaultConfig() Config {
 		Temperature:  0.2,
 		Tools:        true,
 		Context:      true,
+		Memory:       true,
 		AutoApprove:  false,
 		Persist:      true,
 		ServerAddr:   ":8090",

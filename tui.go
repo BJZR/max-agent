@@ -45,11 +45,17 @@ func runTUI(cfg Config, prov *Provider, system string) error {
 
 	ws := newWorkspace()
 
+	var mem *Memory
+	if cfg.Memory {
+		mem = loadMemory()
+	}
+
 	agent := &Agent{
 		prov:        prov,
 		config:      cfg,
 		system:      system,
 		ws:          ws,
+		memory:      mem,
 		approver:    &termApprover{in: sc, out: out, auto: cfg.AutoApprove || !isTTY(os.Stdin)},
 		onToken:     func(t string) { fmt.Fprint(out, t) },
 		onReasoning: func(r string) { fmt.Fprintf(out, "\033[2m%s\033[0m", r) },
@@ -135,6 +141,25 @@ func runTUI(cfg Config, prov *Provider, system string) error {
 			fmt.Fprintf(out, "\033[2mcwd: %s\033[0m\n", ws.Cwd())
 			saveSession()
 			continue
+		case line == "/memory":
+			if mem == nil {
+				fmt.Fprintln(out, "(memoria desactivada)")
+				continue
+			}
+			list := mem.List()
+			if len(list) == 0 {
+				fmt.Fprintln(out, "(memoria vacía)")
+			}
+			for _, e := range list {
+				fmt.Fprintf(out, "  - %s\n", e)
+			}
+			continue
+		case strings.HasPrefix(line, "/memory clear"):
+			if mem != nil {
+				mem.Clear()
+			}
+			fmt.Fprintln(out, "(memoria borrada)")
+			continue
 		}
 		fmt.Fprintf(out, "\033[36m»\033[0m %s\n", truncate(line, 500))
 		content, newHist, err := agent.Chat(context.Background(), history, line)
@@ -156,6 +181,7 @@ func printHelp(out io.Writer) {
   /tools   lista de herramientas
   /pwd     muestra el directorio de trabajo
   /cd DIR  cambia el directorio de trabajo
+  /memory  muestra la memoria persistente (/memory clear la borra)
   /clear   borra el historial
   /exit    salir
 
