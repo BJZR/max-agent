@@ -359,6 +359,17 @@ func TestWorkspaceCd(t *testing.T) {
 	}
 }
 
+func TestLoadConfigShellFilled(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := loadConfig(filepath.Join(dir, "no-existe.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Shell == "" {
+		t.Fatal("shell vacío con archivo faltante: normalize() no se está aplicando")
+	}
+}
+
 func TestRuntimeEnv(t *testing.T) {
 	env := runtimeEnv()
 	var path string

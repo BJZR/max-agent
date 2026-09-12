@@ -44,7 +44,7 @@ func loadConfig(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return cfg, nil
+			return normalize(cfg), nil
 		}
 		return cfg, err
 	}
