@@ -398,10 +398,17 @@ func TestAgentMemoryExtraction(t *testing.T) {
 	if _, _, err := agent.Chat(context.Background(), nil, "haz algo"); err != nil {
 		t.Fatal(err)
 	}
+	var list []string
+	for i := 0; i < 40; i++ {
+		list = m.List()
+		if len(list) == 1 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 	if calls < 3 {
 		t.Fatalf("calls = %d, esperaba llamada de archivista (3)", calls)
 	}
-	list := m.List()
 	if len(list) != 1 || !strings.Contains(list[0], "ftui") {
 		t.Fatalf("memoria extraída inválida: %v", list)
 	}

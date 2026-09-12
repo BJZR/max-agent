@@ -25,6 +25,7 @@ type Config struct {
 	MaxSteps     int     `yaml:"max_steps"`
 	CtxChars     int     `yaml:"ctx_chars"`
 	ServerAddr   string  `yaml:"server_addr"`
+	AuthToken    string  `yaml:"auth_token"`
 }
 
 func defaultConfig() Config {
@@ -42,6 +43,7 @@ func defaultConfig() Config {
 		MaxSteps:     12,
 		CtxChars:     16000,
 		ServerAddr:   ":8090",
+		AuthToken:    "",
 	}
 }
 

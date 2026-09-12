@@ -315,7 +315,12 @@ func (a *Agent) Chat(ctx context.Context, history []Msg, input string) (string, 
 			continue
 		}
 		if a.config.Memory && a.memory != nil && (anythingExecuted || looksLikeTask(input) || memIntent(input)) {
-			a.extractMemory(ctx, msgs)
+			memMsgs := msgs
+			go func() {
+				ectx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				a.extractMemory(ectx, memMsgs)
+			}()
 		}
 		return resp.Content, filterNudge(msgs[1:]), nil
 	}

@@ -397,6 +397,9 @@ func readFile(ctx context.Context, ws *Workspace, a toolArgs) (string, error) {
 	}
 	var sb strings.Builder
 	lines := bytes.Split(data, []byte{'\n'})
+	if offset < 0 || limit < 0 {
+		return "", fmt.Errorf("offset y limit deben ser >= 0")
+	}
 	if offset > len(lines) {
 		return "", fmt.Errorf("offset %d fuera de rango (%d líneas)", offset, len(lines))
 	}

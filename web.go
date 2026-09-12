@@ -19,11 +19,13 @@ type webApp struct {
 	cfg        Config
 	prov       *Provider
 	system     string
+	authToken  string
 	memory     *Memory
 	mu         sync.Mutex
 	pending    map[string]chan bool
 	sessions   map[string][]Msg
 	workspaces map[string]*Workspace
+	running    map[string]bool
 }
 
 type webPayload struct {
@@ -73,6 +75,8 @@ func (w *webApprover) Approve(name, args string) (bool, error) {
 	select {
 	case <-w.ctx.Done():
 		return false, w.ctx.Err()
+	case <-time.After(5 * time.Minute):
+		return false, nil
 	case v := <-ch:
 		return v, nil
 	}
@@ -94,6 +98,8 @@ func runWeb(cfg Config, prov *Provider, system string) {
 		pending:    map[string]chan bool{},
 		sessions:   map[string][]Msg{},
 		workspaces: map[string]*Workspace{},
+		running:    map[string]bool{},
+		authToken:   cfg.AuthToken,
 	}
 	if cfg.Memory {
 		app.memory = loadMemory()
@@ -127,15 +133,32 @@ func runWeb(cfg Config, prov *Provider, system string) {
 	mux.HandleFunc("/api/pending", app.handlePendingList)
 	mux.HandleFunc("/api/pending/", app.handlePendingAction)
 
+	var handler http.Handler = mux
+	if app.authToken != "" {
+		handler = app.authMiddleware(mux)
+	}
+
 	addr := cfg.ServerAddr
 	host := addr
 	if strings.HasPrefix(host, ":") {
 		host = "localhost" + host
 	}
 	fmt.Printf("\033[1;32mMAX\033[0m web: http://%s\nmodelo: %s\n", host, cfg.Model)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := http.ListenAndServe(addr, handler); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func (app *webApp) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-MAX-Token") != app.authToken {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			w.Write([]byte(`{"error":"token inválido"}`))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (app *webApp) handleStatic(w http.ResponseWriter, r *http.Request) {
@@ -310,6 +333,20 @@ func (app *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	app.mu.Lock()
+	if app.running[sid] {
+		app.mu.Unlock()
+		write(sseMsg{Type: "error", Text: "la sesión ya tiene una respuesta en curso"})
+		return
+	}
+	app.running[sid] = true
+	app.mu.Unlock()
+	defer func() {
+		app.mu.Lock()
+		delete(app.running, sid)
+		app.mu.Unlock()
+	}()
+
 	var ws *Workspace
 	app.mu.Lock()
 	ws = app.workspaces[sid]
@@ -337,13 +374,15 @@ func (app *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 	content, newHist, err := agent.Chat(ctx, history, p.Text)
 	if err != nil {
 		write(sseMsg{Type: "error", Text: err.Error()})
+	} else {
+		write(sseMsg{Type: "done", Text: content, ID: sid})
 	}
-	write(sseMsg{Type: "done", Text: content, ID: sid})
 
 	app.mu.Lock()
-	if len(app.sessions) > 200 {
+	for len(app.sessions) > 200 {
 		for k := range app.sessions {
 			delete(app.sessions, k)
+			delete(app.workspaces, k)
 			break
 		}
 	}

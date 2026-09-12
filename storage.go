@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -30,9 +31,16 @@ func loadStorePath(p string) store {
 	s := store{}
 	data, err := os.ReadFile(p)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("max: no se pudo leer %s: %v", p, err)
+		}
 		return s
 	}
-	json.Unmarshal(data, &s)
+	if err := json.Unmarshal(data, &s); err != nil {
+		log.Printf("max: sesiones corruptas en %s (%v); se respalda a .bak", p, err)
+		_ = os.WriteFile(p+".bak", data, 0o644)
+		return s
+	}
 	return s
 }
 
@@ -48,5 +56,9 @@ func (s store) savePath(p string) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(p, data, 0o644)
+	tmp := p + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, p)
 }
