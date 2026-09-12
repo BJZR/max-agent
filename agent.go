@@ -48,7 +48,7 @@ var taskWords = []string{
 }
 
 var memWords = []string{
-	"recuerda", "recorda", "guarda", "memoriza", "memoria", "acordate", "anota",
+	"recuerda", "recorda", "recordá", "guarda", "memoriza", "memoria", "acordate", "acordáte", "anota",
 	"no olvides", "tené presente", "ten presente", "de preferencia", "prefiero",
 }
 
